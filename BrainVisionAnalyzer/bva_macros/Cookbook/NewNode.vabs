@@ -1,0 +1,23 @@
+Sub Main
+	Debug.Clear
+	Dim Nr_Channels As Integer
+	Dim WorkData() As Single
+	Dim nhn As New NewHistoryNode
+	Dim DataArray As New FastArray
+
+	Nr_Channels = ActiveNode.Dataset.Channels.Count + 2
+	ReDim WorkData(Nr_Channels * ActiveNode.Dataset.Length)
+
+	nhn.Create("RMS", ActiveNode, "", False, viDtTimeDomain, Nr_Channels, ActiveNode.Dataset.Length, ActiveNode.Dataset.SamplingInterval)
+	Dim Original_Data() As Single
+	Original_Data() = ActiveNode.Dataset.GetData(1, ActiveNode.Dataset.Length)
+	For ch_nr = 1 To ActiveNode.Dataset.Channels.Count
+		DataArray.CopyArray(WorkData, Original_Data, ch_nr, Nr_Channels, ch_nr, ActiveNode.Dataset.Channels.Count)
+	Next ch_nr
+	For i = 0 To 16
+		Debug.Print Str(i) & ": " & WorkData(i)
+	Next i
+
+	nhn.WriteData(ch_nr, 1, ActiveNode.Dataset.Length, WorkData)
+	nhn.Finish
+End Sub

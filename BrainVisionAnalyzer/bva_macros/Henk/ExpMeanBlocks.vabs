@@ -1,0 +1,416 @@
+' CreateMeanBlocks macro - Creates averages over given number of samples in time and exports it to a particular file in export folder, also for segmented data
+' Written by Henk van Steenbergen, Leiden University, May 2010.
+' Export file has the following structure:
+' Histfile HistNode SegNr ChanName IntervalNr AverageValue
+
+'Version info:
+'Version 2: Apr 2019, discovered that the macro does not work properly (swapping channels!!!) when data is manually segmented.
+'Now gives warning so it no longer works on segmented data. If you want you have to change the script yourself.
+'Version 1: May 2010
+
+Const MACRONAME = "ExpMeanBlocks"
+Const PROGNM = "ExpMeanBlocks V2.0"
+
+'General variables
+
+Dim TemplateMode As Boolean                                ' Flag indicating whether we are in history template mode.
+
+'Info about settings
+
+
+'Info about source dataset
+Dim Src_LayLowLim As Long
+Dim Src_LayUpLim As Long
+Dim Src_LayNum As Long
+Dim	Src_ChannelNum As Long
+Dim Src_Time0pnt As Long
+Dim	Src_TimeLength As Long
+Dim Src_SI As Double
+Dim Src_LayFunc As Byte
+Dim Src_SegNum As Long
+
+
+' Dataset object variables.
+Dim nhn As New NewHistoryNode                        ' NewHistoryNode object used for creating a new history node.
+Dim ds As Dataset                                    ' Dataset object. Points to the currently active node.
+Dim fa As New FastArray                                        ' FastArrays used for fast array operations.
+
+'Dialog box values
+
+Dim Dlg_TBlLower As Single
+Dim Dlg_TBlInterval As Single
+Dim Dlg_FileName As String
+
+
+
+Sub Main
+	If Not CheckNodeSettings() Then
+	  Exit All
+	End If
+
+	Set ds = ActiveNode.Dataset
+	GetSrcDataParams
+
+    ' Create a dummy node in order to check for history template mode...
+    TemplateMode = Application.TemplateMode
+
+    ' Check if we are in history template mode...
+    If (TemplateMode = False) Then
+    	ShowMainDialog
+    Else
+		GetOperationInfo
+    End If
+
+    CheckMacroParams
+
+	'The main calculation work
+	ProcessData
+
+    ' Copy the remaining properties and all markers...
+    CopyMarkers ds, nhn
+    CopyProperties ds, nhn
+
+	nhn.Description = BuildParamString
+
+    ' Finish writing the dataset...
+    nhn.Finish
+
+
+End Sub 'Main
+
+
+Function CheckNodeSettings As Boolean
+	CheckNodeSettings = True
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		CheckNodeSettings = False
+		Exit Function
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		CheckNodeSettings = False
+		Exit Function
+	End If
+
+
+'	If ActiveNode.Segments.Count <> 1 And ActiveNode.Dataset.Channels.Count > 1 Then ' this does not work!!!: And ActiveNode.Dataset.SegmentationType = viStManual Then
+'		MsgBox "Only unsegmented data can be used. Or disable this in the script manually if you are sure you segments have equal length"
+'		CheckNodeSettings = False
+'		Exit Function
+'	End If
+
+
+End Function 'CheckNodeSettings As Boolean
+
+Sub GetSrcDataParams
+	Src_ChannelNum = ds.Channels.Count
+
+	'For i = 1 To ds.Markers.Count
+	'	If ds.Markers(i).Type = "Time 0" Then
+'			Src_Time0pnt = ds.Markers(i).Position
+'		End If
+'	Next i
+
+	Src_TimeLength = ds.Length
+	Src_SI = ds.SamplingInterval
+
+	Src_SegNum = ActiveNode.Segments.Count
+
+End Sub 'GetSrcDataParams
+
+Sub ShowMainDialog
+
+	s1 = InputBox$("Enter start point (1..)", _
+           "First datapoint (in segment) [datapoints]:","1")
+
+	s2 = InputBox$("Enter interval in timepoints ", _
+           "Interval [datapoints]:","50")
+
+	s3 = InputBox$("Enter filename to append data to ", _
+           "Filename in current Export directory:","ExportedMeanBlocks.txt")
+
+	Dlg_TBlLower = CSng(s1)
+	Dlg_TBlInterval = CSng(s2)
+	Dlg_FileName = s3
+
+End Sub 'ShowMainDialog
+
+Sub CheckMacroParams
+
+	If (Dlg_TBlLower <= 0) Or (Dlg_TBlInterval <= 0) Or Trim(Dlg_FileName) = "" Then
+		MsgBox "Incorrect values / filename as input. Macro execution aborted."
+		Exit All
+	End If
+
+End Sub
+
+
+Sub ProcessData
+	Dim ChannelCnt As Long
+	Dim SourceData () As Single
+	Dim TargetData () As Single
+	Dim WorkData () As Single
+	Dim ExportData () As Single
+	Dim fa As New FastArray
+	Dim IntNum As Long
+	Dim SegCnt As Long
+
+	SourceData() = ds.GetData(1,ds.Length)
+
+	ReDim TargetData (1 To (UBound(SourceData)))
+   	fa.CopyArray(TargetData, SourceData)
+
+	WorkData = TargetData
+
+	IntNum = Int((((Src_TimeLength / Src_SegNum) - Dlg_TBlLower)+1) / Dlg_TBlInterval)
+
+	If IntNum <= 0 Then
+		MsgBox "Choosen interval too long! Macro execution aborted."
+		Exit All
+	End If
+
+	Dim sFilename As String
+	Dim LineOfData As String
+	sFilename = CurrentWorkspace.ExportFileFolder & "\" & Dlg_FileName
+
+	Open sFilename For Append As #1
+
+	Dim pb1 As New ProgressBar
+
+	pb1.Init "Exporting values", "Please wait..."
+
+	pb1.SetRange 0, Src_SegNum * Src_ChannelNum * IntNum
+	pb1.SetStep 1
+
+	For SegCnt = 1 To Src_SegNum
+		For ChannelCnt = 1 To Src_ChannelNum
+			For IntCnt = 1 To IntNum
+
+				pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+				pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+				If (pnt_TBlUpper - 1) <= Src_TimeLength Then
+
+					'get mean value of this interval
+
+ 					avg = fa.GetMeanValue(WorkData,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum)*(pnt_TBlLower-1)),(Src_ChannelNum),(pnt_TBlUpper-pnt_TBlLower))
+
+					LineOfData = ActiveNode.HistoryFile.DisplayName & vbTab _
+						& ActiveNode.Name & vbTab _
+						& Format(SegCnt,"0000") & vbTab _
+						& ds.Channels.Item(ChannelCnt).Name & vbTab _
+						& Format(IntCnt,"000") & vbTab _
+						& Format(avg,"0.000000000")
+
+					Print #1, LineOfData
+
+					'TODO: export this average to a file
+
+
+
+					'MsgBox CStr(avg)
+
+					'replace data in this interval with this fixed average value
+					'first makes this interval zero by subtracting the data from itself
+
+					'fa.SubtractArray(WorkData,WorkData,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum) *(pnt_TBlLower-1)),(Src_ChannelNum),1+ ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum)*(pnt_TBlLower-1)),(Src_ChannelNum),(pnt_TBlUpper-pnt_TBlLower))
+
+  					'fa.AddValue(WorkData,avg,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum)*(pnt_TBlLower-1)),(Src_ChannelNum),(pnt_TBlUpper-pnt_TBlLower))
+
+				Else
+				  	MsgBox "Error in script!"
+				End If
+
+				pb1.StepIt
+
+				If pb1.UserCanceled Then
+					MsgBox "Macro execution aborted by user"
+					Exit All
+				End If
+
+		  	Next IntCnt
+    	Next ChannelCnt
+    Next SegCnt
+
+'	  fa.DivideValue(ExportData,count)
+
+	ExportData = WorkData
+
+	nhn.Create ValidChildNodeName(ActiveNode,MACRONAME), ActiveNode, "", True
+
+	' nhn.WriteData 0, 1, Src_TimeLength, ExportData()
+ 	' nhn.AddMarker(0,Src_Time0pnt,1,"Time 0","")
+
+	Close #1
+
+End Sub
+
+' Takes a history node name and searches the child node names for the next valid node name...
+Function ValidChildNodeName (SearchNode As HistoryNode, SearchName As String) As String
+        Dim hnChild As HistoryNode
+        Dim hnChildNum As Long
+        Dim SearchNameExt As String
+        Dim FileCount As Long
+        Dim MsgBoxAnswer As Integer
+        ' Initialize local error handling...
+        On Error GoTo LocalError
+        ' And then find the next available node name...
+        FileCount = 1
+        SearchNameExt = ""
+        Do
+                For hnChildNum = 1 To SearchNode.HistoryNodes.Count
+                        If (SearchNode.HistoryNodes(hnChildNum).Name = SearchName & SearchNameExt) Then
+                                FileCount = FileCount + 1
+                                SearchNameExt = " " & FileCount
+                                Exit For
+                        End If
+                Next hnChildNum
+        Loop Until (hnChildNum > SearchNode.HistoryNodes.Count)
+        ValidChildNodeName = SearchName & SearchNameExt
+        ' Exit the function to avoid the error handler
+        Exit Function
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+        ValidChildNodeName = "$$$NodeNameError$$$"
+End Function
+
+' Build the NewHistoryNode description string...
+Function BuildParamString As String
+
+	Dim Outp_info() As String
+
+        Dim nhnString As String
+        nhnString = "*** " & PROGNM & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+        nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+
+		nhnString = nhnString & TXTOPT1 & vbCrLf 'Found maximum
+		nhnString = nhnString & "Startpnt/Interval: " & Format$(Dlg_TBlLower,FMTMS) & "--" & Format$(Dlg_TBlInterval,FMTMS) & " pnts" & vbCrLf
+		nhnString = nhnString & "Filename: " & Dlg_FileName & vbCrLf
+        nhnString = nhnString & vbCrLf
+
+
+        nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+        BuildParamString = nhnString
+End Function
+
+
+Sub GetOperationInfo
+
+	Dim nhnString As String
+	Dim SearchString As String
+	Dim pos1,pos2,pos3 As Long
+
+	nhnString = ActiveTemplateNode.Description
+
+	'Time range baseline
+	pos1 = InStr(nhnString, "Startpnt/Interval: ")+Len("Startpnt/Interval: ")
+	SearchString = Mid(nhnString,pos1)
+	pos1 = 1
+	pos2 = InStr(SearchString,"--")
+	Dlg_TBlLower = CSng(Left(SearchString,pos2-pos1))
+	pos3 = InStr(SearchString," pnts")
+	Dlg_TBlInterval = CSng(Mid(SearchString,pos2+2,pos3-pos2-1))
+
+	pos1 = InStr(nhnString, "Filename: ")+Len("Filename: ")
+	SearchString = Mid(nhnString,pos1)
+	pos1 = 1
+	pos2 = InStr(SearchString,vbCrLf)
+	Dlg_FileName = Left(SearchString,pos2-pos1)
+
+End Sub
+
+
+' Copy properties from source node to target node.
+Sub CopyProperties(dsSrc As Dataset, nhnTarget As NewHistoryNode)
+        Dim i As Long
+        Dim Chs As Channels
+        Dim MsgBoxAnswer As Integer
+        ' Setup local error checking...
+        On Error GoTo LocalError
+        ' And then do your thing...
+        Set Chs = dsSrc.Channels
+        Dim ch As Channel
+        For i = 1 To Chs.Count
+                Set ch = Chs(i)
+                nhnTarget.SetChannelName i, ch.Name
+                nhnTarget.SetRefChannelName i, ch.ReferenceChannel
+
+				nhnTarget.SetChannelUnit i, ch.Unit
+
+                Dim pos As ChannelPosition
+                Set pos = ch.Position
+                nhnTarget.SetChannelPosition i, pos.Radius, pos.Theta, pos.Phi
+        Next
+        nhnTarget.SegmentationType = dsSrc.SegmentationType
+        nhnTarget.Averaged = dsSrc.Averaged
+        ' Exit the sub to avoid the error handler
+        Exit Sub
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+End Sub
+
+' Copy markers from source node to target node.
+Sub CopyMarkers(dsSrc As Dataset, nhnTarget As NewHistoryNode, Optional DownSampleFactor As Long = 1)
+        Dim mk As Marker
+        Dim Mks As Markers
+        Dim MsgBoxAnswer As Integer
+        ' Setup local error checking...
+        On Error GoTo LocalError
+        ' And then do your thing...
+        Set Mks = dsSrc.Markers
+        If (DownSampleFactor = 1) Then
+                For Each mk In Mks
+                        nhnTarget.AddMarker mk.ChannelNumber, mk.Position, mk.Points, mk.Type, mk.Description, mk.Invisible
+                Next mk
+        ElseIf (DownSampleFactor > 1) Then
+                For Each mk In Mks
+                        nhnTarget.AddMarker mk.ChannelNumber, Fix((mk.Position/DownSampleFactor)+1), Fix((mk.Points/DownSampleFactor)+1), mk.Type, mk.Description, mk.Invisible
+                Next mk
+        Else
+                Error 1001        ' Illegal downsample factor found.
+        End If
+        ' Exit the sub to avoid the error handler
+        Exit Sub
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case 1001        ' Block downsample factor is invalid.
+                MsgBox "The downsample factor " & DownSampleFactor & " is unknown or invalid !", vbCritical+vbOkOnly, "  " & ProgramNM & "..."
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+End Sub
+
+Sub SortArrayAsc(myArray() As String)
+	Dim i As Integer
+	Dim j As Integer
+	Dim tmp As String
+
+ 	For i = LBound(myArray,1) To UBound(myArray,1)
+     	For j = LBound(myArray,1) To (UBound(myArray,1) - i - 1)
+	        If (myArray(j, 1) > myArray(j + 1, 1)) Then
+				 For t  = LBound(myArray,2) To UBound(myArray,2)
+              		tmp = myArray(j, t)
+      	      		myArray(j, t) = myArray(j + 1, t)
+		       		myArray(j + 1, t) = tmp
+				 Next t
+	        End If
+	    Next j
+	Next i
+
+End Sub

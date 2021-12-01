@@ -1,0 +1,22 @@
+Function PrintAllNodes(nodes As HistoryNodes)
+	For node = 1 To nodes.Count
+		MsgBox nodes(node).Name
+		PrintAllNodes(nodes(node).HistoryNodes)
+	Next
+End Function
+
+Sub Main
+	For file = 1 To HistoryFiles.Count
+		HistoryFiles(file).Open
+
+		Dim Participant_number As Integer
+		Dim Feedback_First As Boolean
+		Participant_number = Int(Mid(HistoryFiles(file).Name, 9, 3))
+
+		Feedback_First = Participant_number Mod 2 = 0
+		PrintAllNodes(HistoryFiles(file).HistoryNodes)
+
+		HistoryFiles(file).Close
+	Next
+
+End Sub

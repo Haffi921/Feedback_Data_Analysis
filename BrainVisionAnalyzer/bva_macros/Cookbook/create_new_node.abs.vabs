@@ -1,0 +1,6 @@
+Sub Main
+	Dim nhn As New NewHistoryNode
+	nhn.Create "Test", ActiveNode
+	MsgBox Str(Application.TemplateMode)
+	nhn.Finish
+End Sub

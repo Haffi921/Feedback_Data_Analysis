@@ -1,0 +1,10 @@
+# R
+.Rproj.user
+old/
+
+acq_data
+instructions
+bva_hist
+
+*.wksp2
+*.zip

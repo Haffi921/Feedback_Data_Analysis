@@ -1,0 +1,137 @@
+Const PROGRAM_NAME = "AddSerialNrToMarkers"
+
+Dim Marker_Name As String
+Dim Starting_Count As Long
+Dim Count As Long
+Dim Prev_Count As Long
+Dim Count_Should_Be_Equal As Boolean
+
+Dim OperationInfo As String
+
+Dim nhn As New NewHistoryNode
+
+Sub Main
+	Debug.Clear
+	nhn.Create("AddSerialNrToMarkers", ActiveNode)
+
+	GetOperationVariables
+
+	AddSerialNrToMarkers
+
+	CreateOperationInfo
+
+	nhn.Finish
+End Sub
+
+Sub AddSerialNrToMarkers
+	Dim Mk As Marker
+	Dim NewDesc As String
+
+	Count = Starting_Count
+
+	For Each Mk In	ActiveNode.Dataset.Markers
+		If Mk.Description = Marker_Name Then
+			Count = Count + 1
+			NewDesc = Mk.Description & Format(Count, "_0000")
+			nhn.RemoveMarker(Mk.ChannelNumber, Mk.Position, Mk.Points, Mk.Type, Mk.Description)
+			nhn.AddMarker(Mk.ChannelNumber, Mk.Position, Mk.Points, Mk.Type, NewDesc, Mk.Invisible)
+		End If
+	Next Mk
+
+	If TemplateMode Then
+		If Count - Starting_Count <> Prev_Count Then
+			Dim MsgText As String
+			MsgText = "Count not the same for " & ActiveNode.HistoryFile.Name & vbCrLf & vbCrLf
+		 	MsgText = MsgText & "Previous Count: " & Prev_Count & vbCrLf
+			MsgText = MsgText & "Curent Count: " & Count & vbCrLf
+			MsgBox MsgText
+		End If
+	End If
+End Sub
+
+
+' -------------------------------
+' Operation Info
+' -------------------------------
+Sub GetOperationVariables
+	If TemplateMode Then
+		GetPrevOperationInfo
+	Else
+		ShowUserDialog
+	End If
+End Sub
+
+Sub ShowUserDialog
+	Const Item_ySize = 20
+	Const Margin = 8
+	Const xSize = 450
+	Const ySize = Margin*2 + Item_ySize*6.5 + Margin*3
+	Const OkButton_xSize = 40
+	Const CancelButton_xSize = 60
+	Const CenterX = xSize / 2
+	Const CenterOkCancel = OkButton_xSize / 2 + CancelButton_xSize / 2
+
+	Begin Dialog UserDialog xSize, ySize
+		Text Margin, Margin, xSize - 2*Margin, Item_ySize, "Enter name of marker to serialize:"
+		TextBox Margin * 3, Margin + Item_ySize, CenterX, Item_ySize, .Marker_Name
+		Text Margin, Margin + Item_ySize*2.5, xSize - 2*Margin, Item_ySize, "Enter starting number:"
+		TextBox Margin * 3, Margin + Item_ySize*3.5, CenterX, Item_ySize, .Starting_Count
+		CheckBox Margin*1.5, Margin*2.5 + Item_ySize*4.5, xSize - 2*Margin, Item_ySize, "Number of markers should be the same for all files applied to?", .All_Same
+		OKButton CenterX - CenterOkCancel - Margin, ySize - Item_ySize - Margin, OkButton_xSize, Item_ySize
+		CancelButton CenterX + Margin, ySize - Item_ySize - Margin, CancelButton_xSize, Item_ySize
+	End Dialog
+
+	Dim dlg As UserDialog
+	dlg.Starting_Count = "1"
+
+	If Not Dialog(dlg) Then
+		Exit All
+	End If
+
+	Marker_Name = dlg.Marker_Name
+	Count_Should_Be_Equal = dlg.All_Same
+	Starting_Count = CInt(dlg.Starting_Count) - 1
+End Sub
+
+Sub GetPrevOperationInfo
+	Dim PrevOperationInfo As String
+	PrevOperationInfo = ActiveTemplateNode.Description
+
+	Marker_Name = FindInStrBetween(PrevOperationInfo, "Marker Name: ", vbCrLf)
+	Prev_Count = CLng(FindInStrBetween(PrevOperationInfo, "Count: ", vbCrLf))
+	Starting_Count = CLng(FindInStrBetween(PrevOperationInfo, "Start/End: ", "-")) - 1
+	Count_Should_Be_Equal = CBool(FindInStrBetween(PrevOperationInfo, "equal: ", vbCrLf))
+End Sub
+
+Sub CreateOperationInfo
+	Dim nhnString As String
+
+    nhnString = "*** " & PROGRAM_NAME & " written by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Marker Name: " & Marker_Name & vbCrLf
+	nhnString = nhnString & "Count: " & Count - Starting_Count & vbCrLf
+	nhnString = nhnString & "Start/End: " & Starting_Count + 1 & "-" & Count & vbCrLf
+	nhnString = nhnString & "Should all be equal: " & Count_Should_Be_Equal & vbCrLf
+	If Count_Should_Be_Equal And TemplateMode Then
+		nhnString = nhnString & "Previous count: " & Prev_Count & vbCrLf
+	End If
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    nhn.Description = nhnString
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Helper Functions
+' -------------------------------
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, Length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	Length = InStr(pos, SearchString, EndString) - pos
+	FindInStrBetween = Mid(SearchString, pos, Length)
+End Function
+' -------------------------------

@@ -1,0 +1,286 @@
+Const PROGRAM_NAME = "ExportBinsCSV"
+
+' New Node
+Dim OperationInfo As String
+Dim nhn As New NewHistoryNode
+Dim Count As Long
+
+' Input variables
+Dim Selected_Channels() As String
+Dim Startpoint As Long
+Dim Interval_Length As Long
+Dim Filename As String
+'Dim Only_Template As Boolean
+
+' Data
+Dim Data_Length As Long
+' Channels
+Dim Nr_Channels As Long
+' Segments
+Dim Nr_Segments As Long
+Dim Segment_Length As Long
+' Intervals
+Dim Nr_Intervals As Long
+
+Sub Main
+	Debug.Clear
+	CheckActiveNode
+
+	GenerateOperationInfo
+
+	InitializeConstants
+
+	CreateNode
+
+	If Count > 0 Then
+		Process
+	End If
+
+	nhn.Finish
+End Sub
+
+Sub InitializeConstants
+	' Whole data length
+	Data_Length = ActiveNode.Dataset.Length
+
+	' Channels
+	Nr_Channels = UBound(Selected_Channels) + 1
+
+	' Segments
+	Nr_Segments = ActiveNode.Segments.Count
+	Segment_Length = Data_Length / Nr_Segments
+
+	CheckAllSegmentsAreEqual
+
+	' Intervals
+	Nr_Intervals = RoundDown((Segment_Length - Startpoint + 1) / Interval_Length)
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Checks
+' -------------------------------
+Sub CheckActiveNode
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit All
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		Exit All
+	End If
+End Sub
+
+Sub CheckAllSegmentsAreEqual
+	For seg = 1 To Nr_Segments
+		If ActiveNode.Segments(seg).Dataset.Length <> Segment_Length Then
+			MsgBox "Error: Not all segments are of the same length. This is required!"
+			Exit All
+		End If
+	Next seg
+End Sub
+
+Sub CheckOperationInfo
+	If (Startpoint <= 0) Or (Interval_Length <= 0) Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Operation Info
+' -------------------------------
+Sub GenerateOperationInfo
+	If TemplateMode Then
+		OperationInfo = ActiveTemplateNode.Description
+		GetOperationInfo
+		CreateOperationInfo
+	Else
+		ShowMainDialog
+		CreateOperationInfo
+	End If
+	CheckOperationInfo
+End Sub
+
+Sub ShowMainDialog
+	Dim Channel_Names(ActiveNode.Dataset.Channels.Count - 1) As String
+
+	' Get Channel names in ActiveNode
+	For Channel_Nr = LBound(Channel_Names) To UBound(Channel_Names)
+		Channel_Names(Channel_Nr) = ActiveNode.Dataset.Channels(Channel_Nr + 1).Name
+	Next Channel_Nr
+
+	Begin Dialog UserDialog 400, 233, "ExportBinsCSV"
+		' Channel options
+		MultiListBox 20, 10, 360, 100, Channel_Names, .Selected_Channels
+
+		' Bin options
+		Text 20, 122, 70, 12, "Startpoint:"
+		TextBox 130, 120, 90, 18, .Startpoint$
+		Text 20, 142, 110, 12, "Interval length:"
+		TextBox 130, 140, 90, 18, .Interval_Length$
+
+		' File
+		Text 20, 162, 70, 12, "Filename:"
+		TextBox 130, 160, 150, 18, .Filename$
+		Text 282, 162, 70, 12, ".csv"
+
+		' Template mode
+		CheckBox 20, 183, 370, 15, "Only write data when applying node", .Only_Template
+
+		' Buttons
+		OKButton 110, 206, 40, 20
+		CancelButton 230, 206, 60, 20
+	End Dialog
+	Dim dlg As UserDialog
+
+	' Default Values
+	dlg.Startpoint$ = "1"
+	dlg.Interval_Length$ = "200"
+	dlg.Filename = PROGRAM_NAME
+
+	' User presses cancel
+	If Dialog(dlg) = 0 Then
+		Exit All
+	End If
+
+	' User doesn't select any channels
+	If UBound(dlg.Selected_Channels) = -1 Then
+		MsgBox("No channels selected")
+		Exit All
+	End If
+
+	' Get Values
+	ReDim Selected_Channels(0 To UBound(dlg.Selected_Channels))
+
+	For ch_nr = 0 To UBound(dlg.Selected_Channels)
+		Selected_Channels(ch_nr) = Channel_Names(dlg.Selected_Channels(ch_nr))
+	Next ch_nr
+
+	Startpoint = CLng(dlg.Startpoint$)
+	Interval_Length = CLng(dlg.Interval_Length$)
+
+	Filename = dlg.Filename
+	If Not CBool(dlg.Only_Template) Then
+		Count = 1
+	End If
+End Sub
+
+Sub GetOperationInfo
+	Selected_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
+
+	Startpoint = CLng(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
+	Interval_Length = CLng(FindInStrBetween(OperationInfo, "Interval: ", "points"))
+
+	Filename = FindInStrBetween(OperationInfo, "Filename: ", vbCrLf)
+	Count = CLng(FindInStrBetween(OperationInfo, "Count: ", vbCrLf)) + 1
+End Sub
+
+Sub CreateOperationInfo
+    Dim nhnString As String
+
+    nhnString = "*** " & PROGRAM_NAME & " by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(Selected_Channels, ";") & vbCrLf
+	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
+	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
+	nhnString = nhnString & "Filename: " & Filename & vbCrLf
+	nhnString = nhnString & "Count: " & CStr(Count) & vbCrLf
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    OperationInfo = nhnString
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Main Processing
+' -------------------------------
+Sub Process
+	Dim Channel_Nr As Long
+	Dim Segment_Nr As Long
+	Dim Interval_Nr As Long
+	Dim Datapoint As Long
+
+	Dim Data_String As String
+	Dim Channel_Name As String
+	Dim Data_Value As Single
+
+	Dim pbl As New ProgressBar
+	pbl.Init("Exporting bins...", "Please wait...")
+	pbl.SetRange(0, Nr_Segments * Nr_Channels * Nr_Intervals)
+	pbl.SetStep(1)
+
+	Filename = CurrentWorkspace.ExportFileFolder & "\" & Filename
+
+	Open Filename & ".csv" For Append As #1
+
+	If Count = 1 Then
+		Data_String = "File, Count, Channel, Segment, Bin, Value"
+		Print #1, Data_String
+	End If
+
+	For Segment_Nr = 1 To Nr_Segments
+		For Channel_Nr = 1 To Nr_Channels
+			Channel_Name = Selected_Channels(Channel_Nr - 1)
+			For Interval_Nr = 1 To Nr_Intervals
+				Datapoint = GetDatapointAt(Segment_Nr, Interval_Nr) + Interval_Length / 2
+				Data_Value = ActiveNode.Dataset(Channel_Name)(Datapoint)
+				Data_String = ActiveNode.HistoryFile.Name & ", " _
+					& Count & ", " _
+					& Channel_Name & ", " _
+					& Segment_Nr & ", " _
+					& Interval_Nr & ", " _
+					& Data_Value
+				Print #1, Data_String
+				pbl.StepIt
+			Next Interval_Nr
+		Next Channel_Nr
+	Next Segment_Nr
+
+	Close #1
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Helper functions
+' -------------------------------
+Sub CreateNode
+	nhn.Create(PROGRAM_NAME, ActiveNode)
+	nhn.Description = OperationInfo
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Helper functions
+' -------------------------------
+Function GetDatapointsUpTo(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointsUpTo = ((Segment_Nr - 1) * Segment_Length) + ((Interval_Nr - 1) * Interval_Length) + (Startpoint - 1)
+End Function
+
+Function GetDatapointAt(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointAt = GetDatapointsUpTo(Segment_Nr, Interval_Nr) + 1
+End Function
+
+Function GetMultipointAt(Channel_Nr As Long, Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetMultipointAt = (GetDatapointsUpTo(Segment_Nr, Interval_Nr) * Nr_Channels) + Channel_Nr
+End Function
+
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, Length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	Length = InStr(pos, SearchString, EndString) - pos
+	FindInStrBetween = Mid(SearchString, pos, Length)
+End Function
+
+Function RoundDown(Number As Single) As Long
+	RoundDown = Round(Number)
+	If Number - RoundDown < 0 Then
+		RoundDown = RoundDown - 1
+	End If
+End Function
+' -------------------------------

@@ -1,0 +1,121 @@
+'Add Serial Number Markers to existing data set
+'Adds a new seq marker number for each segment
+'Add a marker called NewName + _Serial Number formatted 0000 increasing when any of these marker names is found (type of this new marker reflects fnd type of names found)
+
+'Version 1.0: 28/3/2013 H van Steenbergen
+
+' Rename markers
+' User input for fnd/new name, skipped input in template processing
+Sub Main
+	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit Sub
+	End If
+	Dim nhn As New NewHistoryNode
+	Dim sFndName As String, sNewName As String
+	nhn.Create ValidChildNodeName(ActiveNode,"AddSerNumToMarkers"), ActiveNode
+	If nhn.Description = "" Then	' Interactive mode
+		sFndName = "special macro, /Time 0/"
+		sNewName = InputBox("Enter serial number label (formatted <label>_0000", "Label = ")
+		nhn.Description = "AddSerNumToMarkers" & vbCrLf & "Fnd name: " & sFndName & _
+			vbCrLf & "New name: " & sNewName
+	Else	' Template mode
+		' Retrieve names from description text
+		Dim nPos As Integer, sTemp As String
+		sTemp = nhn.Description
+		nPos = InStr(sTemp, "Fnd name: ")
+		If nPos > 0 Then
+			sTemp = Mid(sTemp, nPos + Len("Fnd name: "))
+			nPos = InStr(sTemp, vbCrLf)
+			sFndName = Left(sTemp, nPos - 1)
+			sNewName = Mid(sTemp, nPos + 2 + Len("New name: "))
+		End If
+	End If
+	If Trim(sNewName) = "" Then
+		MsgBox "Missing new name"
+		Exit Sub
+	End If
+
+	Dim FndNamesArray() As String
+	Dim ifnd As Long
+	Dim sernumcnt As Long
+	sernumcnt = 0
+
+	FndNamesArray = Split("Time 0",";")
+
+	For ifnd = LBound(FndNamesArray) To UBound(FndNamesArray)
+		FndNamesArray(ifnd) = Trim(FndNamesArray(ifnd))
+	Next ifnd
+
+	Dim Markers As Markers
+	Dim mk As Marker
+	Set Markers  = ActiveNode.Dataset.Markers
+	For Each mk In Markers
+		If PosInArrayStr(FndNamesArray,mk.Type) > -1 Then
+			'Add a SerialNumMarker for this marker
+			sernumcnt = sernumcnt + 1
+			With mk
+				NewDescr = sNewName + "_" + Format(sernumcnt,"0000")
+				nhn.AddMarker .ChannelNumber, .Position, .Points, "SeqNR", NewDescr
+			End With
+		End If
+	Next mk
+	nhn.Finish
+End Sub
+
+' It is not possible to rename a marker directly. This function does
+' this by removing a marker, and then adding a new on.
+Sub RenameMarkerDescription(mk As Marker, nhn As NewHistoryNode, NewDescription As String)
+	With mk
+		nhn.RemoveMarker .ChannelNumber, .Position, .Points, _
+					 	 .Type, .Description
+		nhn.AddMarker .ChannelNumber, .Position, .Points, _
+							 .Type, NewDescription
+	End With
+End Sub
+
+' Takes a history node name and searches the child node names for the next valid node name...
+Function ValidChildNodeName (SearchNode As HistoryNode, SearchName As String) As String
+        Dim hnChild As HistoryNode
+        Dim hnChildNum As Long
+        Dim SearchNameExt As String
+        Dim FileCount As Long
+        Dim MsgBoxAnswer As Integer
+        ' Initialize local error handling...
+        On Error GoTo LocalError
+        ' And then find the next available node name...
+        FileCount = 1
+        SearchNameExt = ""
+        Do
+                For hnChildNum = 1 To SearchNode.HistoryNodes.Count
+                        If (SearchNode.HistoryNodes(hnChildNum).Name = SearchName & SearchNameExt) Then
+                                FileCount = FileCount + 1
+                                SearchNameExt = " " & FileCount
+                                Exit For
+                        End If
+                Next hnChildNum
+        Loop Until (hnChildNum > SearchNode.HistoryNodes.Count)
+        ValidChildNodeName = SearchName & SearchNameExt
+        ' Exit the function to avoid the error handler
+        Exit Function
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+        ValidChildNodeName = "$$$NodeNameError$$$"
+End Function
+
+Function PosInArrayStr(ByRef strArray() As String, searchstr As String) As Long
+	PosInArrayStr = -1
+	For i = LBound(strArray) To UBound(strArray)
+		'first condition new in version 1.1
+		If UCase(strArray(i))<> "" And (UCase(searchstr) = UCase(strArray(i))) Then
+			PosInArrayStr = i
+			Exit For
+		End If
+	Next i
+End Function

@@ -1,0 +1,25 @@
+acq_folder="acq_data"
+output_folder="bva_data"
+channel_indexes=[0, 1]
+channel_names=["EMG_Corr", "EMG_Zygo"]
+write_markers=true
+marker_channel_index=9
+expected_nr_markers=4818
+
+[marker_map]
+"1-8" = "Trial Start"
+"11-18" = "Trial End"
+"21-28" = "Feedback Start"
+"31-38" = "Feedback End"
+"41" = "Correct Response"
+"42" = "Incorrect Response"
+"43" = "No Response"
+"45" = "Target Onset"
+"51-58" = "Block Start"
+"61-68" = "Block End"
+"71-78" = "Practice Trial Start"
+"81-88" = "Practice Trial End"
+"91-98" = "Practice Feedback Start"
+"101-108" = "Practice Feedback End"
+"50" = "Practice Block Start"
+"60" = "Practice Block End"

@@ -1,0 +1,174 @@
+Dim OperationInfo As String
+
+Dim Startpoint As Integer
+Dim Interval_Length As Integer
+Dim ZBin_Start As Integer
+Dim ZBin_End As Integer
+Dim Input_Channels() As String
+Dim Include_Parent As Boolean
+
+Sub Main
+	Debug.Clear
+
+	CheckActiveNode
+
+	GenerateOperationInfo
+
+	Debug.Print OperationInfo
+
+	GetOperationInfo
+
+	Debug.Print OperationInfo
+End Sub
+
+Sub CheckActiveNode
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit All
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		Exit All
+	End If
+End Sub
+
+' ---------------------------------------
+' Operation Info
+' ---------------------------------------
+Sub GenerateOperationInfo
+	If Application.TemplateMode Then
+		OperationInfo = ActiveTemplateNode.Description
+		GetOperationInfo
+	Else
+		ShowMainDialog
+		OperationInfo = CreateOperationInfo()
+	End If
+	CheckOperationInfo
+End Sub
+
+Sub CheckOperationInfo
+	If (Startpoint <= 0) Or (Interval_Length <= 0) Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+
+	If ZBin_Start <= 0 Then
+		MsgBox "Incorrect bin range as input. ZBin start must be a positive integer!"
+		Exit All
+	End If
+
+	If ZBin_End <= 0 Then
+		MsgBox "Incorrect bin range as input. ZBin end must be a positive integer!"
+		Exit All
+	End If
+
+	If ZBin_Start >= ZBin_End Then
+		MsgBox "Incorrect bin range as input. ZBin start must be less than ZBin end!"
+		Exit All
+	End If
+End Sub
+
+Sub ShowMainDialog
+	Dim ChannelNames(ActiveNode.Dataset.Channels.Count) As String
+
+	' Get Channel names in ActiveNode
+	For ch = 1 To ActiveNode.Dataset.Channels.Count
+		ChannelNames(ch) = ActiveNode.Dataset.Channels(ch).Name
+	Next ch
+
+	Begin Dialog UserDialog 400, 282
+		' Channel options
+		MultiListBox 20, 10, 360, 100, ChannelNames, .SelectedChannels
+
+		' Bin options
+		Text 20, 122, 70, 12, "Startpoint:"
+		TextBox 130, 120, 90, 18, .Startpoint$
+		Text 20, 142, 110, 12, "Interval length:"
+		TextBox 130, 140, 90, 18, .Interval_Length$
+
+		' Z calculation options
+		Text 20, 168, 350, 12, "Select bin range to include for Z-score calculation:"
+		Text 40, 187, 70, 12, "Start:"
+		TextBox 90, 185, 90, 18, .ZBin_Start$
+		Text 43, 205, 70, 12, "End:"
+		TextBox 90, 203, 90, 18, .ZBin_End$
+
+		CheckBox 20, 230, 180, 15, "Include data from parent node", .Include_Parent
+
+		' Buttons
+		OKButton 110, 250, 40, 20
+		CancelButton 230, 250, 60, 20
+	End Dialog
+	Dim dlg As UserDialog
+
+	' Default Values
+	dlg.Startpoint$ = "1"
+	dlg.Interval_Length$ = "50"
+	dlg.ZBin_Start$ = "1"
+	dlg.ZBin_End$ = "20"
+	dlg.Include_Parent = True
+
+	' User presses cancel
+	If Dialog(dlg) = 0 Then
+		Exit All
+	End If
+
+	' User doesn't select any channels
+	If UBound(dlg.SelectedChannels) = -1 Then
+		MsgBox("No channels selected")
+		Exit All
+	End If
+
+	' Get Values
+	ReDim Input_Channels(1 To UBound(dlg.SelectedChannels) + 1)
+
+	For ch_nr = 0 To UBound(dlg.SelectedChannels)
+		Input_Channels(ch_nr + 1) = ChannelNames(dlg.SelectedChannels(ch_nr) + 1)
+	Next ch_nr
+
+	Startpoint = CInt(dlg.Startpoint$)
+	Interval_Length = CInt(dlg.Interval_Length$)
+	ZBin_Start = CInt(dlg.ZBin_Start$)
+	ZBin_End = CInt(dlg.ZBin_End$)
+	Include_Parent = dlg.Include_Parent
+End Sub
+
+Function CreateOperationInfo As String
+    Dim nhnString As String
+
+    nhnString = "*** " & PROGNM & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+    nhnString = nhnString & "*** Revised and rewritten by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(Input_Channels, ";") & vbCrLf
+	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
+	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
+	nhnString = nhnString & "Bin Range: " & CStr(ZBin_Start) & "-" & CStr(ZBin_End) & " (used for z-score calc.)" & vbCrLf
+	nhnString = nhnString & "Include Parent Data: " & CStr(Include_Parent) & vbCrLf
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    CreateOperationInfo = nhnString
+End Function
+
+Sub GetOperationInfo
+	Input_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
+
+	Startpoint = CInt(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
+	Interval_Length = CInt(FindInStrBetween(OperationInfo, "Interval: ", "points"))
+
+	ZBin_Start = CInt(FindInStrBetween(OperationInfo, "Bin Range: ", "-"))
+	ZBin_End = CInt(FindInStrBetween(OperationInfo, "Bin Range: " & CStr(ZBin_Start) & "-", " (used"))
+
+	Include_Parent = CBool(FindInStrBetween(OperationInfo, "Include Parent Data: ", vbCrLf))
+End Sub
+' ---------------------------------------
+
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	length = InStr(pos, SearchString, EndString) - pos
+	FindInStrBetween = Mid(SearchString, pos, length)
+End Function

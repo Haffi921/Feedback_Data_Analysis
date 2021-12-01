@@ -1,0 +1,201 @@
+' New node
+Dim NewNode As New NewHistoryNode
+
+' Data processing
+Dim ChannelData() As Channel
+Dim DataArray() As New FastArray
+
+' RMS Settings
+Dim Startpoint As Integer
+Dim Interval_Length As Integer
+Dim ZBin_Start As Integer
+Dim ZBin_End As Integer
+
+' Output settings
+Dim OperationInfo As String
+Dim SourceChannels() As String
+Dim DestinationChannels() As String
+
+Sub Main
+	Debug.Clear
+
+	CheckActiveNode
+
+	GenerateOperationInfo
+
+	GetChannelData
+
+	CreateNode
+End Sub
+
+Sub CreateNode
+	NewNode.Create("RMS", ActiveNode, "", False, viDtTimeDomain, Data.Channels.Count, Data.Length, Data.SamplingInterval)
+	NewNode.Description = OperationInfo
+	CopyMarkers
+	CopyProperties
+	NewNode.Finish
+End Sub
+
+Sub CheckActiveNode
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit All
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		Exit All
+	End If
+End Sub
+
+'Sub GetChannelData
+'	On Error GoTo CheckChannelError
+'
+'	ReDim ChannelData (Len(SourceChannels))
+'	For ch = 1 To Len(SourceChannels)
+'		ChannelData(ch) = ActiveNode.Dataset.Channels(SourceChannels(ch))
+'	Next ChannelName
+'
+'	Exit Sub
+
+'CheckChannelError:
+'	Dim nError As Integer
+'	nError = Err.Number And &h7fff
+'	Select Case nError
+'	Case 1513
+'		MsgBox("Error: Channel specified cannot be found")
+'	End Select
+'	Exit All
+'End Sub
+
+' ---------------------------------------
+' Main process
+' ---------------------------------------
+Sub Process
+	' ---------------------------------------
+	' Progress Bar
+	' ---------------------------------------
+	Dim pb1 As New ProgressBar
+
+	pb1.Init "Calculating binned signal and standard deviation", "Please wait..."
+	pb1.SetRange(0, ActiveNode.Segments.Count * Len(SourceChannels))
+	pb1.SetStep 1
+	' ---------------------------------------
+	On Error GoTo CheckChannelError
+
+	Dim WorkData() As Single
+	Dim Segments_Length As Long
+	Dim CurrentChannel As Channel
+
+	Segments_Length = Long( ActiveNode.Dataset.Length / ActiveNode.Segments.Count )
+	Num_Intervals = Long( ( Segments_Length - Startpoint + 1 ) / Interval )
+
+	' TODO: Check wtf this is
+	If Interval_Length <= 0 Then
+		MsgBox "Choosen interval too long! Macro execution aborted."
+		Exit All
+	End If
+
+	For Each CurrentChannel In ChannelData
+		For CurrentSegment = 1 To ActiveNode.Segments.Count
+			WorkData = ActiveNode.Segments(CurrentSegment).Dataset.GetData(1, ActiveNode.Segments(CurrentSegment).Dataset.Length, {CurrentChannel})
+			For CurrentInterval = 1 To Num_Interval
+
+				CurrentInterval_LowerBound = Startpoint + (Interval_Length * CurrentInterval)
+				CurrentInterval_HighBound = CurrentInterval_LowerBound + Interval_Length
+
+				If CurrentInterval_HighBound - 1 <= ActiveNode.Dataset.Length Then
+					avg = DataArray.GetMeanValue()
+
+				Else
+					MsgBox("Error in script!")
+					Exit All
+				End If
+			Next CurrentInterval
+		Next CurrentSegment
+	Next ChannelName
+
+	Exit Sub
+
+CheckChannelError:
+	Dim nError As Integer
+	nError = Err.Number And &h7fff
+	Select Case nError
+	Case 1513
+		MsgBox("Error: Channel specified cannot be found")
+	End Select
+	Exit All
+
+End Sub
+' ---------------------------------------
+
+' ---------------------------------------
+' Operation Info
+' ---------------------------------------
+Sub GenerateOperationInfo
+	If Application.TemplateMode Then
+		OperationInfo = ActiveTemplateNode.Description
+		GetOperationInfo
+	Else
+		ShowMainDialog
+		OperationInfo = CreateOperationInfo()
+	CheckOperationInfo
+End Sub
+
+Sub CheckOperationInfo
+	If (Startpoint <= 0) Or (Interval <= 0) Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+
+	If (ZBin_Start <= 0) Or (ZBin_End <= 0) Or (ZBin_Start < ZBin_End) Then
+		MsgBox "Incorrect bin range as input. Macro execution aborted."
+		Exit All
+	End If
+End Sub
+
+Sub ShowMainDialog
+	SourceChannels = Split(InputBox$("Enter channel names to do calculations on. Separate channel names with ';' if multiple.", "Channels", "EMG"), ";")
+
+	Startpoint = CInt(InputBox$("Enter starting datapoint:", "First datapoint:", "1"))
+	Interval_Length = CInt(InputBox$(GetInputInt("Enter interval length in timepoints:", "Interval [datapoints]:", "50"))
+
+	ZBin_Start = CInt(InputBox$(GetInputInt("Enter first bin number to include for Z-score calculation", "First bin:", "1")
+	ZBin_End = CInt(InputBox$("Enter last bin number to include for Z-score calculation", "Last bin:", "20")
+End Sub
+
+Function CreateOperationInfo As String
+    Dim nhnString As String
+
+    nhnString = "*** " & PROGNM & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+    nhnString = nhnString & "*** Revised and rewritten by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(SourceChannels, ";") & vbCrLf
+	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
+	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
+	nhnString = nhnString & "Bin Range: " & CStr(ZBin_Start) & "-" & CStr(ZBin_End) & " (used for z-score calc.)" & vbCrLf
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    BuildParamString = nhnString
+End Function
+
+Sub GetOperationInfo
+	SourceChannels = Split(FindInStrBetween(Operation, "Channels: ", vbCrLf), ";")
+
+	Startpoint = CInt(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
+	Interval_Length = CInt(FindInStrBetween(OperationInfo, "Interval: ", "points"))
+
+	ZBin_Start = CInt(FindInStrBetween(OperationInfo, "Bin Range: ", "-"))
+	ZBin_End = CInt(FindInStrBetween(OperationInfo, "Bin Range: " & CStr(Dlg_ZBinStart) & "-", " (used"))
+End Sub
+' ---------------------------------------
+
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	length = InStr(pos, SearchString, EndString) - pos
+	FindIntInStr = Mid(SearchString, pos, length)
+End Function

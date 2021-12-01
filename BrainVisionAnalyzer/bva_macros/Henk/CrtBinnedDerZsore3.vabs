@@ -1,0 +1,714 @@
+' CreatedBinnedDerZscore macro -
+'   Dlg_Source1ChnName: will contain root of binned average values. Assumes ^2 values
+'	Can be used for EMG analysis.
+'   Creates bad interval markers based on:
+'	1. variation within ach Segment based on temporal change of root of average binned signal following method by Achaibou et al. 2008. Called PerSegDer (marker name = "SD__") here
+'   as of version 3 also:
+'   2. variation within Each Segment based on absolute value of root of average binned signal. Called PerSeg (marker name = "SX__") here
+'   3. variation within Each Bin (across segments) based on temporal change of root of average binned signal. Called PerBinDer (marker name = "__BD") here
+'   4. variation within Each Bin (across segments) based on absolute value of root of average binned signal. Called PerBin (marker name = "__BX") here
+
+' Written by Henk van Steenbergen, Leiden University
+
+
+Const MACRONAME = "CrtBinnedDerZsore3"
+Const PROGNM = "CrtBinnedDerZsore V3.1"
+
+Const Dlg_SourceChnNameString = "EMG1_RMS;EMG2_RMS;"
+'Const Dlg_DestZscoreChnNameString = "EMG1_ZDEV;EMG2_ZDEV;"					'channel should exist already, should have values 0!!!
+
+Const CritZPerSeg = 3.5 '> this value Abs(z) of ZPerSeg is considered to be outlier so that Bad interval marker is added
+Const CritZPerSegDer = 3.5 '> this value Abs(z) of ZPerSegDer is considered to be outlier so that Bad interval marker is added
+Const CritZPerBin = 3.5 '> this value Abs(z) of ZPerSeg is considered to be outlier so that Bad interval marker is added
+Const CritZPerBinDer = 3.5 '> this value Abs(z) of ZPerSegDer is considered to be outlier so that Bad interval marker is added
+
+
+'Version info
+'Version 3.1: solved bug with binwise zscore (marker at earlier segment)
+'Version 3 : created 7 August 2017: very advanced version of earlier macro
+'Version 2 : created nov 2010: now flexibile amount of channels possible
+'Version 1 : created 8 Oct 2010
+
+
+'General variables
+
+Dim TemplateMode As Boolean                                ' Flag indicating whether we are in history template mode.
+
+'Info about settings
+
+
+'Info about source dataset
+Dim Src_LayLowLim As Long
+Dim Src_LayUpLim As Long
+Dim Src_LayNum As Long
+Dim	Src_ChannelNum As Long
+Dim Src_Time0pnt As Long
+Dim	Src_TimeLength As Long
+Dim Src_SI As Double
+Dim Src_LayFunc As Byte
+Dim Src_SegNum As Long
+
+
+' Dataset object variables.
+Dim nhn As New NewHistoryNode                        ' NewHistoryNode object used for creating a new history node.
+Dim ds As Dataset                                    ' Dataset object. Points to the currently active node.
+Dim fa As New FastArray                                        ' FastArrays used for fast array operations.
+
+'Dialog box values
+
+Dim Dlg_TBlLower As Single
+Dim Dlg_TBlInterval As Single
+Dim Dlg_LBin As Long
+Dim Dlg_UBin As Long
+Dim Dlg_SrcChans() As String
+Dim Dlg_DestChans() As String
+
+'global vars used by CalcMeanandStandardDeviation sub
+Dim dblStandardDeviation As Double
+Dim dblMean As Double
+
+Sub Main
+
+
+	If Not CheckNodeSettings() Then
+	  Exit All
+	End If
+
+	Set ds = ActiveNode.Dataset
+	GetSrcDataParams
+
+    ' Create a dummy node in order to check for history template mode...
+    TemplateMode = Application.TemplateMode
+
+    ' Check if we are in history template mode...
+    If (TemplateMode = False) Then
+    	ShowMainDialog
+    Else
+		GetOperationInfo
+    End If
+
+    CheckMacroParams
+
+	'The main calculation work
+	ProcessData
+
+    ' Copy the remaining properties and all markers...
+    CopyMarkers ds, nhn
+    CopyProperties ds, nhn
+
+	nhn.Description = BuildParamString
+
+    ' Finish writing the dataset...
+    nhn.Finish
+
+
+End Sub 'Main
+
+
+Function CheckNodeSettings As Boolean
+	CheckNodeSettings = True
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		CheckNodeSettings = False
+		Exit Function
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		CheckNodeSettings = False
+		Exit Function
+	End If
+
+
+'	If ActiveNode.Segments.Count <> 1 Then
+'		MsgBox "Only unsegmented data can be used"
+'		CheckNodeSettings = False
+'		Exit Function
+'	End If
+
+End Function 'CheckNodeSettings As Boolean
+
+Sub GetSrcDataParams
+	Src_ChannelNum = ds.Channels.Count
+
+	'For i = 1 To ds.Markers.Count
+	'	If ds.Markers(i).Type = "Time 0" Then
+'			Src_Time0pnt = ds.Markers(i).Position
+'		End If
+'	Next i
+
+	Src_TimeLength = ds.Length
+	Src_SI = ds.SamplingInterval
+
+	Src_SegNum = ActiveNode.Segments.Count
+
+End Sub 'GetSrcDataParams
+
+Sub ShowMainDialog
+
+	s1 = InputBox$("Enter start point (1..)", _
+           "First datapoint [datapoints]:","1")
+
+	s2 = InputBox$("Enter interval in timepoints ", _
+           "Interval [datapoints]:","50")
+
+	s3 = InputBox$("Enter first bin number to include for Z-score calculation ", _
+           "Interval [datapoints]:","1")
+
+	s4 = InputBox$("Enter last bin number to include for Z-score calculation ", _
+           "Interval [datapoints]:","20")
+
+	Dlg_TBlLower = CSng(s1)
+	Dlg_TBlInterval = CSng(s2)
+
+	Dlg_LBin = CLng(s3)
+	Dlg_UBin = CLng(s4)
+
+	Dlg_SrcChans()=Split(Dlg_SourceChnNameString,";")
+	Dlg_DestChans()=Split(Dlg_DestZscoreChnNameString,";")
+
+End Sub 'ShowMainDialog
+
+Sub CheckMacroParams
+
+	If (Dlg_TBlLower <= 0) Or (Dlg_TBlInterval <= 0)Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+
+	If (Dlg_LBin <= 0) Or (Dlg_UBin <= 0)Then
+		MsgBox "Incorrect bin range as input. Macro execution aborted."
+		Exit All
+	End If
+
+
+End Sub
+
+
+Sub ProcessData
+	Dim ChannelCnt As Long
+	Dim SourceData () As Single
+	Dim TargetData () As Single
+	Dim WorkData () As Single
+	Dim ExportData () As Single
+	Dim MeanSeries () As Single
+	Dim DerMeanSeries () As Single	 '2 dim as of v3
+	Dim ZDerMeanSeries () As Single   '2 dim as of v3
+	Dim ZeroBasedArray () As Single
+	Dim fa As New FastArray
+	Dim IntNum As Long
+	Dim SegCnt As Long
+	Dim temp As Long
+
+	WorkData() = ds.GetData(1,ds.Length)
+
+	IntNum = Int((((Src_TimeLength / Src_SegNum) - Dlg_TBlLower)+1) / Dlg_TBlInterval)
+
+	If IntNum <= 0 Then
+		MsgBox "Choosen interval too long! Macro execution aborted."
+		Exit All
+	End If
+
+
+	ReDim MeanSeries (Dlg_LBin To Dlg_UBin, 1 To Src_SegNum)
+	ReDim DerMeanSeries (Dlg_LBin + 1 To Dlg_UBin, 1 To Src_SegNum)
+
+	ReDim ZPerSegMeanSeries (Dlg_LBin To Dlg_UBin, 1 To Src_SegNum)
+	ReDim ZPerBinMeanSeries (Dlg_LBin To Dlg_UBin, 1 To Src_SegNum)
+	ReDim ZPerSegDerMeanSeries (Dlg_LBin + 1 To Dlg_UBin, 1 To Src_SegNum)
+	ReDim ZPerBinDerMeanSeries (Dlg_LBin + 1 To Dlg_UBin, 1 To Src_SegNum)
+
+
+
+	Dim pb1 As New ProgressBar
+
+	pb1.Init "Calculating binned signal and standard deviation", "Please wait..."
+	pb1.SetRange 0, Src_SegNum*(UBound(Dlg_SrcChans)-LBound(Dlg_SrcChans)+1)
+	pb1.SetStep 1
+
+  ' Start creating the new history node... We need to do this first in order to be able to add markers below
+	nhn.Create ValidChildNodeName(ActiveNode,MACRONAME), ActiveNode, "", False, viDtTimeDomain, Src_ChannelNum, Src_TimeLength, Src_SI
+
+	For ChannelCnt = 1 To Src_ChannelNum
+		'check whether this channel is a source channel
+		Dim srcpos As Integer
+		srcpos = Array_IndexOf(Dlg_SrcChans,ds.Channels(ChannelCnt).Name)
+		If srcpos <> -1 Then
+			'This is a source channel to edit
+			For SegCnt = 1 To Src_SegNum
+				For IntCnt = 1 To IntNum 'number of intervals/bins
+
+					pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+					pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+					If (pnt_TBlUpper - 1) <= Src_TimeLength Then
+
+						'get mean value of this interval
+
+	 					avg = fa.GetMeanValue(
+	 						WorkData,
+	 						1 + (
+	 							(SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)
+	 						) + (
+	 							(ChannelCnt-1)
+	 						) + (
+	 							(Src_ChannelNum)*(pnt_TBlLower-1)
+	 						),
+	 						(Src_ChannelNum),
+	 						(pnt_TBlUpper-pnt_TBlLower)
+	 					)
+
+						'get square root out of mean! REMOVE THIS LINE IF NECESSARY
+
+						avg = avg ^ 0.5
+
+						'MsgBox CStr(avg)
+
+						'replace data in this interval with this fixed average value
+						'first makes this interval zero by subtracting the data from itself
+
+						fa.SubtractArray(WorkData,WorkData,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum) *(pnt_TBlLower-1)),(Src_ChannelNum),1+ ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum)*(pnt_TBlLower-1)),(Src_ChannelNum),(pnt_TBlUpper-pnt_TBlLower))
+
+	  					fa.AddValue(WorkData,avg,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * Src_ChannelNum)) + ((ChannelCnt-1))+((Src_ChannelNum)*(pnt_TBlLower-1)),(Src_ChannelNum),(pnt_TBlUpper-pnt_TBlLower))
+
+					Else
+					  	MsgBox "Error in script!"
+					End If
+
+
+					'store the values of this interval in the series arrays
+					If (IntCnt >= Dlg_LBin) And (IntCnt <= Dlg_UBin) Then
+
+						'store avg value in series variable
+						MeanSeries(IntCnt,SegCnt) = avg
+						'store der i.e. difference with previous avg value
+						If IntCnt = Dlg_LBin Then
+							'Do nothing, first element does not exist
+						Else
+							DerMeanSeries(IntCnt,SegCnt)=avg-MeanSeries(IntCnt-1,SegCnt)
+						End If
+					End If
+
+			  	Next IntCnt
+
+			  	'all intervals are done for this segment
+			  	'Now create ZPerSeg ... MeanSeries
+
+				'1 of 2: do this for MeanSeries
+
+				'fill ZeroBasedArray for this which is onedimensional
+				ReDim ZeroBasedArray (0 To (Dlg_UBin-Dlg_LBin))
+
+				temp = 0
+				For IntCnt = Dlg_LBin To Dlg_UBin
+					ZeroBasedArray(temp)=MeanSeries(IntCnt,SegCnt)
+					temp = temp + 1
+				Next IntCnt
+
+				'Now calculate Mean And StdDev so that we can calculate z-scores next
+				' Warning! StandardDeviation assumes Array starting at element 0 Or 1, Not LBound > 1!
+				CalcMeanandStandardDeviation(ZeroBasedArray)
+
+				' Add a marker for each deviating value > threshold
+				For IntCnt = Dlg_LBin To Dlg_UBin
+
+					If Abs((ZeroBasedArray(IntCnt-Dlg_LBin)-dblMean)/dblStandardDeviation) > CritZPerSeg Then
+						'zscore > crit >> Add marker CritZPerSeg
+
+						pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+						pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+						nhn.AddMarker(ChannelCnt,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * 1)) + ((1-1))+((1)*(pnt_TBlLower-1)),pnt_TBlUpper-pnt_TBlLower,"Bad Interval","SX__")
+
+					End If
+
+				Next IntCnt
+
+
+				'2 of 2: do this for MeanDerSeries, very similar code as below 1 of 2, but with 1 less observation because first does not have derivative
+
+				'fill ZeroBasedArray for this which is onedimensional
+				ReDim ZeroBasedArray (0 To (Dlg_UBin-Dlg_LBin)-1)
+				temp = 0
+				For IntCnt = Dlg_LBin+1 To Dlg_UBin
+					ZeroBasedArray(temp)=DerMeanSeries(IntCnt,SegCnt)
+					temp = temp + 1
+				Next IntCnt
+
+				'Now calculate Mean And StdDev so that we can calculate z-scores next
+				' Warning! StandardDeviation assumes Array starting at element 0 Or 1, Not LBound > 1!
+				CalcMeanandStandardDeviation(ZeroBasedArray)
+
+				' Add a marker for each deviating value > threshold
+				For IntCnt = Dlg_LBin+1 To Dlg_UBin
+
+					If Abs((ZeroBasedArray(IntCnt-Dlg_LBin-1)-dblMean)/dblStandardDeviation) > CritZPerSegDer Then
+						'zscore > crit >> Add marker CritZPerSegDer
+
+						pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+						pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+						nhn.AddMarker(ChannelCnt,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * 1)) + ((1-1))+((1)*(pnt_TBlLower-1)),pnt_TBlUpper-pnt_TBlLower,"Bad Interval","SD__")
+
+					End If
+
+				Next IntCnt
+
+				pb1.StepIt
+
+				If pb1.UserCanceled Then
+					Exit All
+				End If
+
+    		Next SegCnt
+
+		  	'all intervals are done for this segment
+		  	'Now create ZPerBin ... MeanSeries
+
+			'1 of 2: do this for MeanSeries
+
+			For IntCnt = Dlg_LBin To Dlg_UBin
+
+				'fill ZeroBasedArray for this which is onedimensional
+				ReDim ZeroBasedArray (0 To Src_SegNum-1)
+
+				temp = 0
+				For SegCnt = 1 To Src_SegNum
+					ZeroBasedArray(temp)=MeanSeries(IntCnt,SegCnt)
+					temp = temp + 1
+				Next SegCnt
+
+				'Now calculate Mean And StdDev so that we can calculate z-scores next
+				' Warning! StandardDeviation assumes Array starting at element 0 Or 1, Not LBound > 1!
+				CalcMeanandStandardDeviation(ZeroBasedArray)
+
+				' Add a marker for each deviating value > threshold
+				For SegCnt = 1 To Src_SegNum
+
+					If Abs((ZeroBasedArray(SegCnt-1)-dblMean)/dblStandardDeviation) > CritZPerBin Then
+						'zscore > crit >> Add marker CritZPerSeg
+
+						pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+						pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+						nhn.AddMarker(ChannelCnt,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * 1)) + ((1-1))+((1)*(pnt_TBlLower-1)),pnt_TBlUpper-pnt_TBlLower,"Bad Interval","__BX")
+
+					End If
+
+				Next SegCnt
+
+			Next IntCnt
+
+			'2 of 2: do this for MeanDerSeries, very similar code as below 1 of 2, but with 1 less observation because first does not have derivative
+
+			For IntCnt = Dlg_LBin+1 To Dlg_UBin
+
+				'fill ZeroBasedArray for this which is onedimensional
+				ReDim ZeroBasedArray (0 To Src_SegNum-1)
+
+				temp = 0
+				For SegCnt = 1 To Src_SegNum
+					ZeroBasedArray(temp)=DerMeanSeries(IntCnt,SegCnt)
+					temp = temp + 1
+				Next SegCnt
+
+				'Now calculate Mean And StdDev so that we can calculate z-scores next
+				' Warning! StandardDeviation assumes Array starting at element 0 Or 1, Not LBound > 1!
+				CalcMeanandStandardDeviation(ZeroBasedArray)
+
+				' Add a marker for each deviating value > threshold
+				For SegCnt = 1 To Src_SegNum
+
+					If Abs((ZeroBasedArray(SegCnt-1)-dblMean)/dblStandardDeviation) > CritZPerBinDer Then
+						'zscore > crit >> Add marker CritZPerSeg
+
+						pnt_TBlLower = Dlg_TBlLower + (Dlg_TBlInterval*(IntCnt-1))
+						pnt_TBlUpper = pnt_TBlLower + Dlg_TBlInterval
+
+						nhn.AddMarker(ChannelCnt,1 + ((SegCnt-1)*(Src_TimeLength / Src_SegNum * 1)) + ((1-1))+((1)*(pnt_TBlLower-1)),pnt_TBlUpper-pnt_TBlLower,"Bad Interval","__BD")
+
+					End If
+
+				Next SegCnt
+
+			Next IntCnt
+
+			If pb1.UserCanceled Then
+				Exit All
+			End If
+
+		End If 'correct Src Channel
+    Next ChannelCnt
+
+
+'	  fa.DivideValue(ExportData,count)
+
+	ExportData = WorkData
+
+    nhn.WriteData 0, 1, Src_TimeLength, ExportData()
+ 	' nhn.AddMarker(0,Src_Time0pnt,1,"Time 0","")
+
+End Sub
+
+' Takes a history node name and searches the child node names for the next valid node name...
+Function ValidChildNodeName (SearchNode As HistoryNode, SearchName As String) As String
+        Dim hnChild As HistoryNode
+        Dim hnChildNum As Long
+        Dim SearchNameExt As String
+        Dim FileCount As Long
+        Dim MsgBoxAnswer As Integer
+        ' Initialize local error handling...
+        On Error GoTo LocalError
+        ' And then find the next available node name...
+        FileCount = 1
+        SearchNameExt = ""
+        Do
+                For hnChildNum = 1 To SearchNode.HistoryNodes.Count
+                        If (SearchNode.HistoryNodes(hnChildNum).Name = SearchName & SearchNameExt) Then
+                                FileCount = FileCount + 1
+                                SearchNameExt = " " & FileCount
+                                Exit For
+                        End If
+                Next hnChildNum
+        Loop Until (hnChildNum > SearchNode.HistoryNodes.Count)
+        ValidChildNodeName = SearchName & SearchNameExt
+        ' Exit the function to avoid the error handler
+        Exit Function
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+        ValidChildNodeName = "$$$NodeNameError$$$"
+End Function
+
+' Build the NewHistoryNode description string...
+Function BuildParamString As String
+
+	Dim Outp_info() As String
+
+        Dim nhnString As String
+        nhnString = "*** " & PROGNM & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+        nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+		nhnString = nhnString & vbCrLf
+		nhnString = nhnString & "Startpnt/Interval: " & Format$(Dlg_TBlLower,FMTMS) & "--" & Format$(Dlg_TBlInterval,FMTMS) & " pnts" & vbCrLf
+		nhnString = nhnString & "Bin_range: " & Format$(Dlg_LBin,FMTMS) & "--" & Format$(Dlg_UBin,FMTMS) & " (used for z-score calc.)" & vbCrLf
+        nhnString = nhnString & vbCrLf
+
+
+
+        nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+        BuildParamString = nhnString
+End Function
+
+
+Sub GetOperationInfo
+
+	Dim nhnString As String
+	Dim SearchString As String
+	Dim pos1,pos2,pos3 As Long
+
+	nhnString = ActiveTemplateNode.Description
+
+	'Time range
+	pos1 = InStr(nhnString, "Startpnt/Interval: ")+Len("Startpnt/Interval: ")
+	SearchString = Mid(nhnString,pos1)
+	pos1 = 1
+	pos2 = InStr(SearchString,"--")
+	Dlg_TBlLower = CSng(Left(SearchString,pos2-pos1))
+	pos3 = InStr(SearchString," pnts")
+	Dlg_TBlInterval = CSng(Mid(SearchString,pos2+2,pos3-pos2-1))
+
+	'Extract Bin range
+
+	pos1 = InStr(nhnString, "Bin_range: ")+Len("Bin_range: ")
+	SearchString = Mid(nhnString,pos1)
+	pos1 = 1
+	pos2 = InStr(SearchString,"--")
+	Dlg_LBin = CSng(Left(SearchString,pos2-pos1))
+	pos3 = InStr(SearchString," (used for z-score calc.)")
+	Dlg_UBin = CSng(Mid(SearchString,pos2+2,pos3-pos2-1))
+
+	'does not extract from operation info:
+	Dlg_SrcChans()=Split(Dlg_SourceChnNameString,";")
+	Dlg_DestChans()=Split(Dlg_DestZscoreChnNameString,";")
+
+
+End Sub
+
+
+' Copy properties from source node to target node.
+Sub CopyProperties(dsSrc As Dataset, nhnTarget As NewHistoryNode)
+        Dim i As Long
+        Dim Chs As Channels
+        Dim MsgBoxAnswer As Integer
+        ' Setup local error checking...
+        On Error GoTo LocalError
+        ' And then do your thing...
+        Set Chs = dsSrc.Channels
+        Dim ch As Channel
+        For i = 1 To Chs.Count
+                Set ch = Chs(i)
+                nhnTarget.SetChannelName i, ch.Name
+                nhnTarget.SetRefChannelName i, ch.ReferenceChannel
+
+				nhnTarget.SetChannelUnit i, ch.Unit
+
+                Dim pos As ChannelPosition
+                Set pos = ch.Position
+                nhnTarget.SetChannelPosition i, pos.Radius, pos.Theta, pos.Phi
+        Next
+        nhnTarget.SegmentationType = dsSrc.SegmentationType
+        nhnTarget.Averaged = dsSrc.Averaged
+        ' Exit the sub to avoid the error handler
+        Exit Sub
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+End Sub
+
+' Copy markers from source node to target node.
+Sub CopyMarkers(dsSrc As Dataset, nhnTarget As NewHistoryNode, Optional DownSampleFactor As Long = 1)
+        Dim mk As Marker
+        Dim Mks As Markers
+        Dim MsgBoxAnswer As Integer
+        ' Setup local error checking...
+        On Error GoTo LocalError
+        ' And then do your thing...
+        Set Mks = dsSrc.Markers
+        If (DownSampleFactor = 1) Then
+                For Each mk In Mks
+                        nhnTarget.AddMarker mk.ChannelNumber, mk.Position, mk.Points, mk.Type, mk.Description, mk.Invisible
+                Next mk
+        ElseIf (DownSampleFactor > 1) Then
+                For Each mk In Mks
+                        nhnTarget.AddMarker mk.ChannelNumber, Fix((mk.Position/DownSampleFactor)+1), Fix((mk.Points/DownSampleFactor)+1), mk.Type, mk.Description, mk.Invisible
+                Next mk
+        Else
+                Error 1001        ' Illegal downsample factor found.
+        End If
+        ' Exit the sub to avoid the error handler
+        Exit Sub
+        ' Locally used error checking routines...
+        LocalError:
+        Dim nError As Long
+        nError = Err.Number And &h7fff        ' Extract pure error code...
+        Select Case nError
+        Case 1001        ' Block downsample factor is invalid.
+                MsgBox "The downsample factor " & DownSampleFactor & " is unknown or invalid !", vbCritical+vbOkOnly, "  " & ProgramNM & "..."
+        Case Else        ' Unexpected or unknown error occurred...
+                MsgBoxAnswer = Msg("Error No. " & nError & ": "&Error(nError) & "  Please contact the support team.", vbCritical+vbOkCancel, "  " & ProgramNM & "...")
+        End Select
+End Sub
+
+Sub SortArrayAsc(myArray() As String)
+	Dim i As Integer
+	Dim j As Integer
+	Dim tmp As String
+
+ 	For i = LBound(myArray,1) To UBound(myArray,1)
+     	For j = LBound(myArray,1) To (UBound(myArray,1) - i - 1)
+	        If (myArray(j, 1) > myArray(j + 1, 1)) Then
+				 For t  = LBound(myArray,2) To UBound(myArray,2)
+              		tmp = myArray(j, t)
+      	      		myArray(j, t) = myArray(j + 1, t)
+		       		myArray(j + 1, t) = tmp
+				 Next t
+	        End If
+	    Next j
+	Next i
+
+End Sub
+
+'Sub takes an array with numeric elements as a parameter
+'and calcuates mean and standard deviation stored in globals vars dblMean and dblStandardDeviation 'edit Henk van Steenbergen 2017
+
+Public Sub CalcMeanandStandardDeviation(NumericArray As Variant)
+
+Dim dblSum As Double, dblSumSqdDevs As Double
+Dim lngCount As Long, dblAnswer As Double
+Dim vElement As Variant
+Dim lngStartPoint As Long, lngEndPoint As Long, lngCtr As Long
+
+On Error GoTo errorhandler
+'if NumericArray is not an array, this statement will
+'raise an error in the errorhandler
+
+lngCount = UBound(NumericArray)
+
+On Error Resume Next
+lngCount = 0
+
+'the check below will allow
+'for 0 or 1 based arrays.
+
+vElement = NumericArray(0)
+
+lngStartPoint = IIf(Err.Number = 0, 0, 1)
+lngEndPoint = UBound(NumericArray)
+
+'get sum and sample size
+For lngCtr = lngStartPoint To lngEndPoint
+  vElement = NumericArray(lngCtr)
+    If IsNumeric(vElement) Then
+      lngCount = lngCount + 1
+      dblSum = dblSum + CDbl(vElement)
+    End If
+Next
+
+'get mean
+If lngCount > 1 Then
+    dblMean = dblSum / lngCount
+
+    'get sum of squared deviations
+    For lngCtr = lngStartPoint To lngEndPoint
+        vElement = NumericArray(lngCtr)
+
+        If IsNumeric(vElement) Then
+            dblSumSqdDevs = dblSumSqdDevs + _
+            ((vElement - dblMean) ^ 2)
+        End If
+    Next
+
+'divide result by sample size - 1 and get square root.
+'this function calculates standard deviation of a sample.
+'If your  set of values represents the population, use sample
+'size not sample size - 1
+
+    If lngCount > 1 Then
+        lngCount = lngCount - 1 'eliminate for population values
+        dblAnswer = Sqr(dblSumSqdDevs / lngCount)
+    End If
+
+End If
+
+'StandardDeviation = dblAnswer
+dblStandardDeviation = dblAnswer
+
+Exit Sub
+
+errorhandler:
+Err.Raise Err.Number
+Exit Sub
+
+End Sub
+
+Function Array_IndexOf(ByRef sa() As String, ByVal search As String) As Integer
+	Dim x,cnt As Integer
+	x = -1
+	For cnt = LBound(sa) To UBound(sa)
+		If sa(cnt) = search Then
+		  x = cnt
+		End If
+	Next cnt
+
+	Array_IndexOf=x
+End Function

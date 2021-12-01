@@ -1,0 +1,385 @@
+Const PROGRAM_NAME = "RMS"
+
+' New Node
+Dim OperationInfo As String
+Dim nhn As New NewHistoryNode
+
+' Operation Info / Input variables
+Dim Input_Channels() As String
+Dim Startpoint As Long
+Dim Interval_Length As Long
+Dim Include_Parent As Boolean
+
+' Data
+Dim Data_Length As Long
+Dim Segment_Length As Long
+Dim Output_Data() As Single
+
+' Channels
+Dim Nr_Parent_Channels As Long
+Dim Nr_Extra_Channels As Long
+Dim Nr_Channels As Long
+' Segments
+Dim Nr_Segments As Long
+' Intervals
+Dim Nr_Intervals As Long
+
+' FastArray object for fast calculation
+Dim DataArray As New FastArray
+
+' -------------------------------
+' Main
+' -------------------------------
+Sub Main
+	Debug.Clear
+
+	' -------------------------------
+	' Node Check
+	' -------------------------------
+	CheckActiveNode
+	' -------------------------------
+
+	' -------------------------------
+	' Operation Info
+	' -------------------------------
+	GenerateOperationInfo
+	' -------------------------------
+
+	' -------------------------------
+	' Initialization
+	' -------------------------------
+	InitializeConstants
+	InitializeData
+	' -------------------------------
+
+	' -------------------------------
+	' RMS Processing
+	' -------------------------------
+	CreateDataWithCopiedChannels(Input_Channels)
+	ProcessData
+	' -------------------------------
+
+	' -------------------------------
+	' Node creation
+	' -------------------------------
+	CreateNewNode(PROGRAM_NAME)
+	' -------------------------------
+End Sub
+
+Sub InitializeConstants
+	' Whole data length
+	Data_Length = ActiveNode.Dataset.Length
+
+	' Channels
+	If Include_Parent Then
+		Nr_Parent_Channels = ActiveNode.Dataset.Channels.Count
+	End If
+	Nr_Extra_Channels = UBound(Input_Channels) + 1
+	Nr_Channels = Nr_Parent_Channels + Nr_Extra_Channels
+
+	' Segments
+	Nr_Segments = ActiveNode.Segments.Count
+	Segment_Length = Data_Length / Nr_Segments
+
+	CheckAllSegmentsAreEqual
+
+	' Intervals
+	Nr_Intervals = RoundDown((Segment_Length - Startpoint + 1) / Interval_Length)
+End Sub
+
+Sub InitializeData
+	' Arrays
+	ReDim Output_Data(1 To Nr_Channels * Data_Length) As Single
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Checks
+' -------------------------------
+Sub CheckActiveNode
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit All
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		Exit All
+	End If
+End Sub
+
+Sub CheckAllSegmentsAreEqual
+	For seg = 1 To Nr_Segments
+		If ActiveNode.Segments(seg).Dataset.Length <> Segment_Length Then
+			MsgBox "Error: Not all segments are of the same length. This is required!"
+			Exit All
+		End If
+	Next seg
+End Sub
+
+Sub CheckOperationInfo
+	If (Startpoint <= 0) Or (Interval_Length <= 0) Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Operation Info
+' -------------------------------
+Sub GenerateOperationInfo
+	If Application.TemplateMode Then
+		OperationInfo = ActiveTemplateNode.Description
+		GetOperationInfo
+	Else
+		ShowMainDialog
+		OperationInfo = CreateOperationInfo()
+	End If
+	CheckOperationInfo
+End Sub
+
+Sub ShowMainDialog
+	Dim ChannelNames(ActiveNode.Dataset.Channels.Count - 1) As String
+
+	' Get Channel names in ActiveNode
+	For ch = LBound(ChannelNames) To UBound(ChannelNames)
+		ChannelNames(ch) = ActiveNode.Dataset.Channels(ch + 1).Name
+	Next ch
+
+	Begin Dialog UserDialog 400, 213
+		' Channel options
+		MultiListBox 20, 10, 360, 100, ChannelNames, .SelectedChannels
+
+		' Bin options
+		Text 20, 122, 70, 12, "Startpoint:"
+		TextBox 130, 120, 90, 18, .Startpoint$
+		Text 20, 142, 110, 12, "Interval length:"
+		TextBox 130, 140, 90, 18, .Interval_Length$
+
+		CheckBox 20, 163, 180, 15, "Include data from parent node", .Include_Parent
+
+		' Buttons
+		OKButton 110, 186, 40, 20
+		CancelButton 230, 186, 60, 20
+	End Dialog
+	Dim dlg As UserDialog
+
+	' Default Values
+	dlg.Startpoint$ = "1"
+	dlg.Interval_Length$ = "200"
+	dlg.Include_Parent = True
+
+	' User presses cancel
+	If Dialog(dlg) = 0 Then
+		Exit All
+	End If
+
+	' User doesn't select any channels
+	If UBound(dlg.SelectedChannels) = -1 Then
+		MsgBox("No channels selected")
+		Exit All
+	End If
+
+	' Get Values
+	ReDim Input_Channels(0 To UBound(dlg.SelectedChannels))
+
+	For ch_nr = 0 To UBound(dlg.SelectedChannels)
+		Input_Channels(ch_nr) = ChannelNames(dlg.SelectedChannels(ch_nr))
+	Next ch_nr
+
+	Startpoint = CLng(dlg.Startpoint$)
+	Interval_Length = CLng(dlg.Interval_Length$)
+	Include_Parent = dlg.Include_Parent
+End Sub
+
+Sub GetOperationInfo
+	Input_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
+
+	Startpoint = CLng(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
+	Interval_Length = CLng(FindInStrBetween(OperationInfo, "Interval: ", "points"))
+
+	Include_Parent = CBool(FindInStrBetween(OperationInfo, "Include Parent Data: ", vbCrLf))
+End Sub
+
+Function CreateOperationInfo As String
+    Dim nhnString As String
+
+    nhnString = "*** " & PROGRAM_NAME & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+    nhnString = nhnString & "*** Revised and rewritten by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(Input_Channels, ";") & vbCrLf
+	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
+	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
+	nhnString = nhnString & "Include Parent Data: " & CStr(Include_Parent) & vbCrLf
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    CreateOperationInfo = nhnString
+End Function
+' -------------------------------
+
+' -------------------------------
+' Get Input Data
+' -------------------------------
+Function CreateDataWithCopiedChannels(Copy_Channels() As String)
+	If Include_Parent Then
+		GetParentDataWithExtraChannels
+	End If
+
+	For Channel_Nr = 1 To Nr_Extra_Channels
+		CopyChannel(Output_Data, Input_Channels(Channel_Nr - 1), Nr_Parent_Channels + Channel_Nr, Nr_Channels)
+	Next Channel_Nr
+End Function
+
+Sub GetParentDataWithExtraChannels
+	Dim Parent_Data() As Single
+	Parent_Data() = ActiveNode.Dataset.GetData(1, ActiveNode.Dataset.Length)
+
+	If Nr_Channels < Nr_Parent_Channels Then
+		Nr_Channels = Nr_Parent_Channels
+	End If
+
+	For ch_nr = 1 To Nr_Parent_Channels
+		DataArray.CopyArray(Output_Data, Parent_Data, ch_nr, Nr_Channels, ch_nr, Nr_Parent_Channels)
+	Next ch_nr
+End Sub
+
+Function CopyChannel(Output_Data() As Single, Channel_Name As String, Position As Long, Offset As Long)
+	Dim tmp() As Single
+	ActiveNode.Dataset.Channels(Channel_Name).GetData(1, Data_Length, tmp)
+	DataArray.CopyArray(Output_Data, tmp, Position, Offset)
+End Function
+' -------------------------------
+
+' -------------------------------
+' Main RMS Process
+' -------------------------------
+Sub ProcessData
+	Dim Channel_Nr As Long
+	Dim Segment_Nr As Long
+	Dim Interval_Nr As Long
+	Dim Datapoint As Long
+
+	Dim pbl As New ProgressBar
+	pbl.Init("Creating bins...", "Please wait...")
+	pbl.SetRange(0, Nr_Extra_Channels * Nr_Segments * (Nr_Intervals - 1))
+	pbl.SetStep(1)
+
+	' Loop through all added channels
+	For Channel_Nr = Nr_Parent_Channels + 1 To Nr_Channels
+
+		' Loop through all segments
+		For Segment_Nr = 1 To Nr_Segments
+
+			' Loop through all intervals of segment
+			For Interval_Nr = 1 To Nr_Intervals
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+
+				Datapoint = GetMultipointAt(Channel_Nr, Segment_Nr, Interval_Nr)
+				RMS(Output_Data, Datapoint, Nr_Channels, Interval_Length)
+
+				' First interval, we nullify preceding datapoints
+				'If Interval_Nr = 1 And Startpoint > 1 Then
+					'Debug.Print "Clearing start"
+					'DataArray.CopyValue(Output_Data, 0, Datapoint - (Startpoint - 1) * Nr_Channels, Nr_Channels, Startpoint - 1)
+				'End If
+
+				'Dim Avg As Single
+				' Calculate RMS and replace interval data with Avg
+
+				' Last Interval we check to see if there are more values to look at
+				'Interval_End = Interval_Nr * Interval_Length
+				'If Interval_Nr = Nr_Intervals And Segment_Length - Interval_End > 0 Then
+				'	DataArray.CopyValue(Output_Data, 0, Datapoint + Interval_Length, Nr_Channels, Segment_Length - Interval_End + 1)
+				'End If
+
+				pbl.StepIt()
+			Next Interval_Nr
+
+		Next Segment_Nr
+
+	Next Channel_Nr
+End Sub
+
+Function RMS(Output_Data() As Single, Start As Long, Offset As Long, Length As Long)
+	DataArray.SquareArray(Output_Data, Start, Offset, Length)
+	Avg = Sqr(DataArray.GetMeanValue(Output_Data, Start, Offset, Length))
+	DataArray.CopyValue(Output_Data, Avg, Start, Offset, Length)
+	'RMS = Avg
+End Function
+' -------------------------------
+
+' -------------------------------
+' Final Node Creation
+' -------------------------------
+Sub CopyProperties
+	For Channel_Nr = 1 To Nr_Extra_Channels
+		Dim Input_Channel As Channel
+		Dim Input_Channel_name As String
+		Dim Output_Channel_pos As Long
+
+		Input_Channel_name = Input_Channels(Channel_Nr - 1)
+		Set Input_Channel = ActiveNode.Dataset.Channels(Input_Channel_name)
+		Output_Channel_pos = Nr_Parent_Channels + Channel_Nr
+
+		nhn.SetChannelName(Output_Channel_pos, Input_Channel_name & "_RMS")
+		nhn.SetChannelUnit(Output_Channel_pos, Input_Channel.Unit)
+		nhn.SetRefChannelName(Output_Channel_pos, Input_Channel.ReferenceChannel)
+
+		Dim pos As ChannelPosition
+		Set pos = Input_Channel.Position
+		nhn.SetChannelPosition(Output_Channel_pos, pos.Radius, pos.Theta, pos.Phi)
+	Next Channel_Nr
+
+	nhn.Averaged = ActiveNode.Dataset.Averaged
+	nhn.SegmentationType = ActiveNode.Dataset.SegmentationType
+
+	Dim Mk As Marker
+	For Each Mk In ActiveNode.Dataset.Markers
+		nhn.AddMarker(Mk.ChannelNumber, Mk.Position, Mk.Points, Mk.Type, Mk.Description, Mk.Invisible)
+	Next Mk
+End Sub
+
+Function CreateNewNode(Node_Name As String)
+	nhn.Create(Node_Name, ActiveNode, "", False, viDtTimeDomain, Nr_Channels, ActiveNode.Dataset.Length, ActiveNode.Dataset.SamplingInterval)
+	nhn.WriteData(0, 1, ActiveNode.Dataset.Length, Output_Data)
+	CopyProperties
+	nhn.Description = OperationInfo
+	nhn.Finish
+End Function
+' -------------------------------
+
+' -------------------------------
+' Helper functions
+' -------------------------------
+Function GetDatapointsUpTo(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointsUpTo = ((Segment_Nr - 1) * Segment_Length) + ((Interval_Nr - 1) * Interval_Length) + (Startpoint - 1)
+End Function
+
+Function GetDatapointAt(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointAt = GetDatapointsUpTo(Segment_Nr, Interval_Nr) + 1
+End Function
+
+Function GetMultipointAt(Channel_Nr As Long, Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetMultipointAt = (GetDatapointsUpTo(Segment_Nr, Interval_Nr) * Nr_Channels) + Channel_Nr
+End Function
+
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, Length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	Length = InStr(pos, SearchString, EndString) - pos
+	FindInStrBetween = Mid(SearchString, pos, Length)
+End Function
+
+Function RoundDown(Number As Single) As Long
+	RoundDown = Round(Number)
+	If Number - RoundDown < 0 Then
+		RoundDown = RoundDown - 1
+	End If
+End Function
+' -------------------------------

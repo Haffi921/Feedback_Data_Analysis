@@ -1,0 +1,571 @@
+' New Node
+Dim OperationInfo As String
+Dim nhn As New NewHistoryNode
+
+' Operation Info / Input variables
+Dim Input_Channels() As String
+Dim Startpoint As Long
+Dim Interval_Length As Long
+Dim ZBin_Start As Long
+Dim ZBin_End As Long
+Dim Include_Parent As Boolean
+
+' Data
+Dim Data_Length As Long
+Dim Segment_Length As Long
+Dim Output_Data() As Single
+
+' Channels
+Dim Nr_Parent_Channels As Long
+Dim Nr_Extra_Channels As Long
+Dim Nr_Channels As Long
+' Segments
+Dim Nr_Segments As Long
+' Intervals
+Dim Nr_Intervals As Long
+
+
+' Z calculation
+Dim MeanList() As Single
+Dim MeanDiffList() As Single
+Dim Bad_Intervals() As Boolean
+
+' FastArray object for fast calculation
+Dim DataArray As New FastArray
+
+' -------------------------------
+' Main
+' -------------------------------
+Sub Main
+	Debug.Clear
+
+	' -------------------------------
+	' Node Check
+	' -------------------------------
+	CheckActiveNode
+	' -------------------------------
+
+	' -------------------------------
+	' Operation Info
+	' -------------------------------
+	GenerateOperationInfo
+	' -------------------------------
+
+	' -------------------------------
+	' Initialization
+	' -------------------------------
+	InitializeConstants
+	InitializeArrays
+	' -------------------------------
+
+	' -------------------------------
+	' RMS Processing
+	' -------------------------------
+	CreateDataWithCopiedChannels(Input_Channels)
+	ProcessData
+	' -------------------------------
+
+	' -------------------------------
+	' Find outliers
+	' -------------------------------
+	Find_Bad_Intervals(MeanList)
+	Find_Bad_Intervals(MeanDiffList)
+	' -------------------------------
+
+	' -------------------------------
+	' Node creation
+	' -------------------------------
+	CreateNewNode("RMS")
+	' -------------------------------
+End Sub
+
+Sub InitializeConstants
+	' Whole data length
+	Data_Length = ActiveNode.Dataset.Length
+
+	' Channels
+	If Include_Parent Then
+		Nr_Parent_Channels = ActiveNode.Dataset.Channels.Count
+	End If
+	Nr_Extra_Channels = UBound(Input_Channels)
+	Nr_Channels = Nr_Parent_Channels + Nr_Extra_Channels
+
+	' Segments
+	Nr_Segments = ActiveNode.Segments.Count
+	Segment_Length = Data_Length / Nr_Segments
+
+	CheckAllSegmentsAreEqual
+
+	' Intervals
+	Nr_Intervals = Data_Length / Nr_Segments / Interval_Length
+
+	CheckZBinSelection
+End Sub
+
+Sub InitializeArrays
+	' Arrays
+	'' Output ''
+	ReDim Output_Data(1 To Nr_Channels * Data_Length) As Single
+	'' Z Calculation ''
+	ReDim MeanList(Nr_Parent_Channels + 1 To Nr_Channels, 1 To Nr_Segments, ZBin_Start To ZBin_End)
+	ReDim MeanDiffList(Nr_Parent_Channels + 1 To Nr_Channels, 1 To Nr_Segments, ZBin_Start + 1 To ZBin_End)
+	ReDim Bad_Intervals(Nr_Parent_Channels + 1 To Nr_Channels, 1 To Nr_Segments, ZBin_Start To ZBin_End)
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Checks
+' -------------------------------
+Sub CheckActiveNode
+  	If Not ActiveNode.DataAvailable Then
+		MsgBox "This macro needs an open data window."
+		Exit All
+	End If
+	If ActiveNode.Dataset.Type <> viDtTimeDomain Then
+		MsgBox "Current Dataset is of type HEX" & Hex(ActiveNode.Dataset.Type) &  ". This macro expects data in the Time domain = HEX 101."
+		Exit All
+	End If
+End Sub
+
+Sub CheckAllSegmentsAreEqual
+	For seg = 1 To Nr_Segments
+		If ActiveNode.Segments(seg).Dataset.Length <> Segment_Length Then
+			MsgBox "Error: Not all segments are of the same length. This is required!"
+			Exit All
+		End If
+	Next seg
+End Sub
+
+Sub CheckZBinSelection
+	If ZBin_End > Nr_Intervals Then
+		MsgBox "Incorrect bin range as input. ZBin end cannot be more than number of bins!" & vbCrLf & "Amount of Bins: " & Nr_Intervals
+		Exit All
+	End If
+End Sub
+
+
+Sub CheckOperationInfo
+	If (Startpoint <= 0) Or (Interval_Length <= 0) Then
+		MsgBox "Incorrect datapoint ranges as input. Macro execution aborted."
+		Exit All
+	End If
+
+	If ZBin_Start <= 0 Then
+		MsgBox "Incorrect bin range as input. ZBin start must be a positive integer!"
+		Exit All
+	End If
+
+	If ZBin_End <= 0 Then
+		MsgBox "Incorrect bin range as input. ZBin end must be a positive integer!"
+		Exit All
+	End If
+
+	If ZBin_Start >= ZBin_End Then
+		MsgBox "Incorrect bin range as input. ZBin start must be less than ZBin end!"
+		Exit All
+	End If
+End Sub
+' -------------------------------
+
+' -------------------------------
+' Operation Info
+' -------------------------------
+Sub GenerateOperationInfo
+	If Application.TemplateMode Then
+		OperationInfo = ActiveTemplateNode.Description
+		GetOperationInfo
+	Else
+		ShowMainDialog
+		OperationInfo = CreateOperationInfo()
+	End If
+	CheckOperationInfo
+End Sub
+
+Sub ShowMainDialog
+	Dim ChannelNames(ActiveNode.Dataset.Channels.Count) As String
+
+	' Get Channel names in ActiveNode
+	For ch = 1 To ActiveNode.Dataset.Channels.Count
+		ChannelNames(ch) = ActiveNode.Dataset.Channels(ch).Name
+	Next ch
+
+	Begin Dialog UserDialog 400, 282
+		' Channel options
+		MultiListBox 20, 10, 360, 100, ChannelNames, .SelectedChannels
+
+		' Bin options
+		Text 20, 122, 70, 12, "Startpoint:"
+		TextBox 130, 120, 90, 18, .Startpoint$
+		Text 20, 142, 110, 12, "Interval length:"
+		TextBox 130, 140, 90, 18, .Interval_Length$
+
+		' Z calculation options
+		Text 20, 168, 350, 12, "Select bin range to include for Z-score calculation:"
+		Text 40, 187, 70, 12, "Start:"
+		TextBox 90, 185, 90, 18, .ZBin_Start$
+		Text 43, 205, 70, 12, "End:"
+		TextBox 90, 203, 90, 18, .ZBin_End$
+
+		CheckBox 20, 230, 180, 15, "Include data from parent node", .Include_Parent
+
+		' Buttons
+		OKButton 110, 250, 40, 20
+		CancelButton 230, 250, 60, 20
+	End Dialog
+	Dim dlg As UserDialog
+
+	' Default Values
+	dlg.Startpoint$ = "1"
+	dlg.Interval_Length$ = "50"
+	dlg.ZBin_Start$ = "1"
+	dlg.ZBin_End$ = "20"
+	dlg.Include_Parent = True
+
+	' User presses cancel
+	If Dialog(dlg) = 0 Then
+		Exit All
+	End If
+
+	' User doesn't select any channels
+	If UBound(dlg.SelectedChannels) = -1 Then
+		MsgBox("No channels selected")
+		Exit All
+	End If
+
+	' Get Values
+	ReDim Input_Channels(1 To UBound(dlg.SelectedChannels) + 1)
+
+	For ch_nr = 0 To UBound(dlg.SelectedChannels)
+		Input_Channels(ch_nr + 1) = ChannelNames(dlg.SelectedChannels(ch_nr) + 1)
+	Next ch_nr
+
+	Startpoint = CInt(dlg.Startpoint$)
+	Interval_Length = CInt(dlg.Interval_Length$)
+	ZBin_Start = CInt(dlg.ZBin_Start$)
+	ZBin_End = CInt(dlg.ZBin_End$)
+	Include_Parent = dlg.Include_Parent
+End Sub
+
+Sub GetOperationInfo
+	Input_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
+
+	Startpoint = CInt(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
+	Interval_Length = CInt(FindInStrBetween(OperationInfo, "Interval: ", "points"))
+
+	ZBin_Start = CInt(FindInStrBetween(OperationInfo, "Bin Range: ", "-"))
+	ZBin_End = CInt(FindInStrBetween(OperationInfo, "Bin Range: " & CStr(ZBin_Start) & "-", " (used"))
+
+	Include_Parent = CBool(FindInStrBetween(OperationInfo, "Include Parent Data: ", vbCrLf))
+End Sub
+
+Function CreateOperationInfo As String
+    Dim nhnString As String
+
+    nhnString = "*** " & PROGNM & " written by Henk van Steenbergen, Leiden University ***" & vbCrLf
+    nhnString = nhnString & "*** Revised and rewritten by Hafsteinn Ragnarsson, Tübingen University ***" & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+	nhnString = nhnString & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(Input_Channels, ";") & vbCrLf
+	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
+	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
+	nhnString = nhnString & "Bin Range: " & CStr(ZBin_Start) & "-" & CStr(ZBin_End) & " (used for z-score calc.)" & vbCrLf
+	nhnString = nhnString & "Include Parent Data: " & CStr(Include_Parent) & vbCrLf
+
+    nhnString = nhnString & vbCrLf
+    nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
+
+    CreateOperationInfo = nhnString
+End Function
+' -------------------------------
+
+' -------------------------------
+' Get Input Data
+' -------------------------------
+Function CreateDataWithCopiedChannels(Copy_Channels() As String)
+	If Include_Parent Then
+		GetParentDataWithExtraChannels
+	End If
+
+	For Channel_Nr = 1 To UBound(Copy_Channels)
+		CopyChannel(Output_Data, Input_Channels(Channel_Nr), Nr_Parent_Channels + Channel_Nr, Nr_Channels)
+	Next Channel_Nr
+End Function
+
+Sub GetParentDataWithExtraChannels
+	Dim Parent_Data() As Single
+	Parent_Data() = ActiveNode.Dataset.GetData(1, ActiveNode.Dataset.Length)
+
+	If Nr_Channels < Nr_Parent_Channels Then
+		Nr_Channels = Nr_Parent_Channels
+	End If
+
+	For ch_nr = 1 To Nr_Parent_Channels
+		DataArray.CopyArray(Output_Data, Parent_Data, ch_nr, Nr_Channels, ch_nr, Nr_Parent_Channels)
+	Next ch_nr
+End Sub
+
+Function CopyChannel(Output_Data() As Single, Channel_Name As String, Position As Long, Offset As Long)
+	Dim tmp() As Single
+	ActiveNode.Dataset.Channels(Channel_Name).GetData(1, Data_Length, tmp)
+	DataArray.CopyArray(Output_Data, tmp, Position, Offset)
+End Function
+' -------------------------------
+
+' -------------------------------
+' Main RMS Process
+' -------------------------------
+Sub ProcessData
+	Dim Channel_Nr As Long
+	Dim Segment_Nr As Long
+	Dim Interval_Nr As Long
+
+	Dim pbl As New ProgressBar
+	pbl.Init("Creating bins.", "Please wait...")
+	pbl.SetRange(0, Nr_Extra_Channels * Nr_Segments * Nr_Intervals)
+	pbl.SetStep(1)
+
+	' Loop through all added channels
+	For Channel_Nr = Nr_Parent_Channels + 1 To Nr_Channels
+
+		' Loop through all segments
+		For Segment_Nr = 1 To Nr_Segments
+
+			' Loop through all intervals of segment
+			For Interval_Nr = 1 To Nr_Intervals
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+
+				Dim Datapoint As Long
+				Datapoint = GetMultipointAt(Channel_Nr, Segment_Nr, Interval_Nr)
+
+				' First interval, we nullify preceding datapoints
+				If Interval_Nr = 1 And Startpoint > 1 Then
+					DataArray.CopyValue(Output_Data, 0, Datapoint - Startpoint + 1, Nr_Channels, Startpoint - 1)
+				End If
+
+				Dim Avg As Single
+				' Calculate RMS and replace interval data with Avg
+				Avg = RMS(Output_Data, Datapoint, Nr_Channels, Interval_Length)
+				' Collect Avg for Z calculation
+				AddAvgToList(Avg, Channel_Nr, Segment_Nr, Interval_Nr)
+
+				' Last Interval we check to see if there are more values to look at
+				Interval_End = Interval_Nr * Interval_Length
+				If Interval_Nr = Nr_Intervals And Segment_Length - Interval_End > 0 Then
+					DataArray.CopyValue(Output_Data, 0, Datapoint + Interval_Length, Nr_Channels, Segment_Length - Interval_End)
+				End If
+
+				pbl.StepIt()
+			Next Interval_Nr
+
+		Next Segment_Nr
+
+	Next Channel_Nr
+End Sub
+
+Function RMS(Output_Data() As Single, Start As Long, Offset As Long, Length As Long) As Single
+	DataArray.SquareArray(Output_Data, Start, Offset, Length)
+	Avg = Sqr(DataArray.GetMeanValue(Output_Data, Start, Offset, Length))
+	DataArray.CopyValue(Output_Data, Avg, Start, Offset, Length)
+	RMS = Avg
+End Function
+
+Function AddAvgToList(Avg As Single, Channel_Nr As Long, Segment_Nr As Long, Interval_Nr As Long)
+	If Interval_Nr >= ZBin_Start And Interval_Nr <= ZBin_End Then
+		MeanList(Channel_Nr, Segment_Nr, Interval_Nr) = Avg
+
+		If Interval_Nr <> ZBin_Start Then
+			MeanDiffList(Channel_Nr, Segment_Nr, Interval_Nr) = Avg - MeanList(Channel_Nr, Segment_Nr, Interval_Nr - 1)
+		End If
+	End If
+End Function
+' -------------------------------
+
+' -------------------------------
+' Interval marking
+' -------------------------------
+Sub MarkIntervals
+	Dim Channel_Nr As Long
+	Dim Segment_Nr As Long
+	Dim Interval_Nr As Long
+
+	Dim pbl As New ProgressBar
+	pbl.Init("Marking bad intervals.", "Please wait...")
+	pbl.SetRange(0, Nr_Extra_Channels * Nr_Segments * (ZBin_End - ZBin_Start + 1))
+	pbl.SetStep(1)
+
+	For Channel_Nr = LBound(Bad_Intervals, 1) To UBound(Bad_Intervals, 1)
+		For Segment_Nr = LBound(Bad_Intervals, 2) To UBound(Bad_Intervals, 2)
+			For Interval_Nr = LBound(Bad_Intervals, 3) To UBound(Bad_Intervals, 3)
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+
+				If Bad_Intervals(Channel_Nr, Segment_Nr, Interval_Nr) Then
+					nhn.AddMarker(Channel_Nr, GetDatapointAt(Segment_Nr, Interval_Nr), Interval_Length, "BI", "Bad Interval")
+				End If
+
+				pbl.StepIt()
+			Next Interval_Nr
+		Next Segment_Nr
+	Next Channel_Nr
+End Sub
+
+Function Find_Bad_Intervals(list() As Single)
+	Dim Channel_Nr As Long
+	Dim Segment_Nr As Long
+	Dim Interval_Nr As Long
+
+	ReDim InterSeg(LBound(list, 3) To UBound(list, 3)) As Single
+	ReDim CrossSeg(LBound(list, 2) To UBound(list, 2)) As Single
+
+	Dim Mean_Avg As Single
+	Dim Std_Avg As Single
+
+	Dim pbl As New ProgressBar
+	pbl.Init("Finding bad intervals.", "Please wait...")
+	pbl.SetRange(0, Nr_Extra_Channels * Nr_Segments * (UBound(list, 3) - LBound(list, 3) + 1) * 2)
+	pbl.SetStep(1)
+
+	For Channel_Nr = LBound(list, 1) To UBound(list, 1)
+		' InterSegment
+		For Segment_Nr = LBound(list, 2) To UBound(list, 2)
+			For Interval_Nr = LBound(list, 3) To UBound(list, 3)
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+				InterSeg(Interval_Nr) = list(Channel_Nr, Segment_Nr, Interval_Nr)
+			Next Interval_Nr
+
+			Mean_Avg = DataArray.GetMeanValue(InterSeg)
+			Std_Avg = Std(InterSeg, Mean_Avg, UBound(InterSeg) - LBound(InterSeg) + 1)
+
+			For Interval_Nr = LBound(list, 3) To UBound(list, 3)
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+
+				If Abs((InterSeg(Interval_Nr) - Mean_Avg) / Std_Avg) > 3.5 Then
+					Bad_Intervals(Channel_Nr, Segment_Nr, Interval_Nr) = True
+				End If
+
+				pbl.StepIt()
+			Next Interval_Nr
+		Next Segment_Nr
+
+		' CrossSegment
+		For Interval_Nr = LBound(list, 3) To UBound(list, 3)
+			For Segment_Nr = LBound(list, 2) To UBound(list, 2)
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+				CrossSeg(Segment_Nr) = list(Channel_Nr, Segment_Nr, Interval_Nr)
+			Next Segment_Nr
+
+			Mean_Avg = DataArray.GetMeanValue(CrossSeg)
+			Std_Avg = Std(CrossSeg, Mean_Avg, UBound(CrossSeg) - LBound(CrossSeg) + 1)
+
+			For Segment_Nr = LBound(list, 2) To UBound(list, 2)
+				If pbl.UserCanceled Then
+					Exit All
+				End If
+
+				If Abs((CrossSeg(Segment_Nr) - Mean_Avg) / Std_Avg) > 3.5 Then
+					Bad_Intervals(Channel_Nr, Segment_Nr, Interval_Nr) = True
+				End If
+
+				pbl.StepIt()
+			Next Segment_Nr
+		Next Interval_Nr
+	Next Channel_Nr
+End Function
+' -------------------------------
+
+' -------------------------------
+' Final Node Creation
+' -------------------------------
+Sub CopyProperties
+	For Channel_Nr = 1 To Nr_Extra_Channels
+		Dim Input_Channel As Channel
+		Dim Input_Channel_name As String
+		Dim Output_Channel_pos As Long
+
+		Input_Channel_name = Input_Channels(Channel_Nr)
+		Set Input_Channel = ActiveNode.Dataset.Channels(Input_Channel_name)
+		Output_Channel_pos = Nr_Parent_Channels + Channel_Nr
+
+		nhn.SetChannelName(Output_Channel_pos, Input_Channel_name & "_RMS")
+		nhn.SetChannelUnit(Output_Channel_pos, Input_Channel.Unit)
+		nhn.SetRefChannelName(Output_Channel_pos, Input_Channel.ReferenceChannel)
+
+		Dim pos As ChannelPosition
+		Set pos = Input_Channel.Position
+		nhn.SetChannelPosition(Output_Channel_pos, pos.Radius, pos.Theta, pos.Phi)
+	Next Channel_Nr
+
+	nhn.Averaged = ActiveNode.Dataset.Averaged
+	nhn.SegmentationType = ActiveNode.Dataset.SegmentationType
+
+	Dim Mk As Marker
+	For Each Mk In ActiveNode.Dataset.Markers
+		nhn.AddMarker(Mk.ChannelNumber, Mk.Position, Mk.Points, Mk.Type, Mk.Description, Mk.Invisible)
+	Next Mk
+End Sub
+
+Function CreateNewNode(Node_Name As String)
+	nhn.Create(Node_Name, ActiveNode, "", False, viDtTimeDomain, Nr_Channels, ActiveNode.Dataset.Length, ActiveNode.Dataset.SamplingInterval)
+	nhn.WriteData(0, 1, ActiveNode.Dataset.Length, Output_Data)
+	MarkIntervals
+	CopyProperties
+	nhn.Description = OperationInfo
+	nhn.Finish
+End Function
+' -------------------------------
+
+' -------------------------------
+' Helper functions
+' -------------------------------
+Function GetDatapointsUpTo(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointsUpTo = ((Segment_Nr - 1) * Segment_Length) + ((Interval_Nr - 1) * Interval_Length) + (Startpoint - 1)
+End Function
+
+Function GetDatapointAt(Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetDatapointAt = GetDatapointsUpTo(Segment_Nr, Interval_Nr) + 1
+End Function
+
+Function GetMultipointAt(Channel_Nr As Long, Segment_Nr As Long, Interval_Nr As Long) As Long
+	GetMultipointAt = (GetDatapointsUpTo(Segment_Nr, Interval_Nr) * Nr_Channels) + Channel_Nr
+End Function
+
+Function FindInStrBetween(SearchString As String, StartString As String, EndString As String) As String
+	Dim pos, Length As Integer
+	pos = InStr(SearchString, StartString) + Len(StartString)
+	Length = InStr(pos, SearchString, EndString) - pos
+	FindInStrBetween = Mid(SearchString, pos, Length)
+End Function
+
+Function Std(list() As Single, Mean As Single, N As Integer)
+	Std = Sum_Of_Square(list, Mean)
+	If N > 2 Then
+		Std = Std / (N - 1)
+	End If
+	Std = Sqr(Std)
+End Function
+
+Function Sum(list() As Single) As Single
+	For i = LBound(list) To UBound(list)
+		Sum = Sum + list(i)
+	Next i
+End Function
+
+Function Sum_Of_Square(list() As Single, Mean As Single) As Single
+	Dim tmp() As Single
+	ReDim tmp(LBound(list) To UBound(list))
+	DataArray.CopyArray(tmp, list)
+	DataArray.SubtractValue(tmp, Mean)
+	DataArray.SquareArray(tmp)
+	Sum_Of_Square = Sum(tmp)
+End Function
+' -------------------------------
