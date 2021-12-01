@@ -16,7 +16,7 @@ library(tidyverse)
 
 
 # Get a list of all the files in 'raw_data' folder
-files <- list.files(path = "raw_data", pattern = "[1-9]{4}.csv$", full.names = T)
+files <- list.files(path = "data/raw/bhv_data", pattern = "[1-9]{4}.csv$", full.names = T)
 
 
 # We read in all csv files we found using map_dfr and read_csv
@@ -92,9 +92,9 @@ bhv <- map_dfr(
 glimpse(bhv)
 
 bhv %>%
-  write_csv("feedback_bhv_data.csv")
+  write_csv("data/feedback_bhv_data.csv")
 
-emg <- read_csv("emg_data/Feedback_EMG.csv") %>%
+emg <- read_csv("data/raw/emg_data/Feedback_EMG.csv") %>%
   rename(participant = Count) %>%
   select(-c("File")) %>%
   mutate(
@@ -103,10 +103,11 @@ emg <- read_csv("emg_data/Feedback_EMG.csv") %>%
   filter(Bin > 4) %>%
   mutate(Bin = Bin - 4) %>%
   pivot_wider(names_from = c(Channel, Bin), values_from = Value) %>%
-  mutate(block = ceiling(Segment / 97)) %>% relocate(block, .before = Segment) %>%
+  mutate(block = ceiling((Segment - 24) / 97)) %>% relocate(block, .before = Segment) %>%
   group_by(participant, block) %>%
-  mutate(Segment = row_number(participant)) %>%
-  rename(trial = Segment)
+  mutate(trial = row_number(participant)) %>% relocate(trial, .after = block) %>%
+  mutate(trial_block = ifelse(block == 0, "practice", "trial"), block = ifelse(block == 0, 1, block)) %>%
+  ungroup()
 
 emg <- bhv %>%
   select(
@@ -122,10 +123,10 @@ emg <- bhv %>%
   inner_join(emg)
 
 emg %>%
-  write_csv("feedback_emg_data.csv")
+  write_csv("data/feedback_emg_data.csv")
 
 bhv %>%
   full_join(emg) %>%
-  write_csv("feedback_full_data.csv")
+  write_csv("data/feedback_full_data.csv")
 
 rm(list = ls())

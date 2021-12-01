@@ -77,7 +77,7 @@ validate <- function(df) {
   )
 }
 
-files <- list.files(path = "raw_data", pattern = "[1-9]{4}.csv$", full.names = T)
+files <- list.files(path = "data/raw/bhv_data", pattern = "[1-9]{4}.csv$", full.names = T)
 
 for (file in files) {
   print(glue::glue("{file}:"))

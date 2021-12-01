@@ -3,9 +3,10 @@ Const PROGRAM_NAME = "RMS"
 ' New Node
 Dim OperationInfo As String
 Dim nhn As New NewHistoryNode
+Dim Output_Data() As Single
 
 ' Operation Info / Input variables
-Dim Input_Channels() As String
+Dim Selected_Channels() As String
 Dim Startpoint As Long
 Dim Interval_Length As Long
 Dim Include_Parent As Boolean
@@ -13,8 +14,6 @@ Dim Include_Parent As Boolean
 ' Data
 Dim Data_Length As Long
 Dim Segment_Length As Long
-Dim Output_Data() As Single
-
 ' Channels
 Dim Nr_Parent_Channels As Long
 Dim Nr_Extra_Channels As Long
@@ -55,7 +54,7 @@ Sub Main
 	' -------------------------------
 	' RMS Processing
 	' -------------------------------
-	CreateDataWithCopiedChannels(Input_Channels)
+	CreateDataWithCopiedChannels(Selected_Channels)
 	ProcessData
 	' -------------------------------
 
@@ -74,7 +73,7 @@ Sub InitializeConstants
 	If Include_Parent Then
 		Nr_Parent_Channels = ActiveNode.Dataset.Channels.Count
 	End If
-	Nr_Extra_Channels = UBound(Input_Channels) + 1
+	Nr_Extra_Channels = UBound(Selected_Channels) + 1
 	Nr_Channels = Nr_Parent_Channels + Nr_Extra_Channels
 
 	' Segments
@@ -148,7 +147,7 @@ Sub ShowMainDialog
 
 	Begin Dialog UserDialog 400, 213
 		' Channel options
-		MultiListBox 20, 10, 360, 100, ChannelNames, .SelectedChannels
+		MultiListBox 20, 10, 360, 100, ChannelNames, .Selected_Channels
 
 		' Bin options
 		Text 20, 122, 70, 12, "Startpoint:"
@@ -175,16 +174,16 @@ Sub ShowMainDialog
 	End If
 
 	' User doesn't select any channels
-	If UBound(dlg.SelectedChannels) = -1 Then
+	If UBound(dlg.Selected_Channels) = -1 Then
 		MsgBox("No channels selected")
 		Exit All
 	End If
 
 	' Get Values
-	ReDim Input_Channels(0 To UBound(dlg.SelectedChannels))
+	ReDim Selected_Channels(0 To UBound(dlg.SelectedChannels))
 
 	For ch_nr = 0 To UBound(dlg.SelectedChannels)
-		Input_Channels(ch_nr) = ChannelNames(dlg.SelectedChannels(ch_nr))
+		Selected_Channels(ch_nr) = ChannelNames(dlg.Selected_Channels(ch_nr))
 	Next ch_nr
 
 	Startpoint = CLng(dlg.Startpoint$)
@@ -193,7 +192,7 @@ Sub ShowMainDialog
 End Sub
 
 Sub GetOperationInfo
-	Input_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
+	Selected_Channels = Split(FindInStrBetween(OperationInfo, "Channels: ", vbCrLf), ";")
 
 	Startpoint = CLng(FindInStrBetween(OperationInfo, "Startpoint: ", vbCrLf))
 	Interval_Length = CLng(FindInStrBetween(OperationInfo, "Interval: ", "points"))
@@ -209,7 +208,7 @@ Function CreateOperationInfo As String
     nhnString = nhnString & "--------------------------------------------------------------------------------------------" & vbCrLf
 
 	nhnString = nhnString & vbCrLf
-	nhnString = nhnString & "Channels: " & Join(Input_Channels, ";") & vbCrLf
+	nhnString = nhnString & "Channels: " & Join(Selected_Channels, ";") & vbCrLf
 	nhnString = nhnString & "Startpoint: " & CStr(Startpoint) & vbCrLf
 	nhnString = nhnString & "Interval: " & CStr(Interval_Length) & " points" & vbCrLf
 	nhnString = nhnString & "Include Parent Data: " & CStr(Include_Parent) & vbCrLf
@@ -230,7 +229,7 @@ Function CreateDataWithCopiedChannels(Copy_Channels() As String)
 	End If
 
 	For Channel_Nr = 1 To Nr_Extra_Channels
-		CopyChannel(Output_Data, Input_Channels(Channel_Nr - 1), Nr_Parent_Channels + Channel_Nr, Nr_Channels)
+		CopyChannel(Output_Data, Selected_Channels(Channel_Nr - 1), Nr_Parent_Channels + Channel_Nr, Nr_Channels)
 	Next Channel_Nr
 End Function
 
@@ -323,7 +322,7 @@ Sub CopyProperties
 		Dim Input_Channel_name As String
 		Dim Output_Channel_pos As Long
 
-		Input_Channel_name = Input_Channels(Channel_Nr - 1)
+		Input_Channel_name = Selected_Channels(Channel_Nr - 1)
 		Set Input_Channel = ActiveNode.Dataset.Channels(Input_Channel_name)
 		Output_Channel_pos = Nr_Parent_Channels + Channel_Nr
 
