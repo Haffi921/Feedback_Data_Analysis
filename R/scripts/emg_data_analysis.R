@@ -11,6 +11,7 @@
 
 AutoWD::autowd(1)
 library(tidyverse)
+library(broom)
 
 df <- read_csv(
   "data/feedback_emg_data.csv",
@@ -77,6 +78,14 @@ df <- df %>%
     Corr_Outlier = outlier(Corr, Corr_Diff),
     Zygo_Outlier = outlier(Zygo, Zygo_Diff),
   ) %>%
+  ungroup() %>%
+  
+  # Mark each trial as outlier
+  group_by(participant, block, trial) %>%
+  mutate(
+    Corr_Outlier = any(Corr_Outlier),
+    Zygo_Outlier = any(Zygo_Outlier),
+  ) %>%
   ungroup()
 
 # Collect outliers for inspection
@@ -88,16 +97,21 @@ Corr_df <- df %>%
   filter(!Corr_Outlier) %>%
   select(-c(Zygo, ends_with("Outlier")))
 
+tidy(Corr_df)
+
 Zygo_df <- df %>%
   filter(!Zygo_Outlier) %>%
   select(-c(Corr, ends_with("Outlier")))
 
-l <- aggregate(Corr ~ Bin + congruencyNmin1 + congruency + feedback, df, mean)
+l <- aggregate(Corr ~ Bin + congruencyNmin1 + congruency + feedback, Corr_df, mean)
 l
 
 model <- aov(Corr ~ feedback * congruency * congruencyNmin1 * Bin, Corr_df)
 
 summary(model)
+
+l <- aggregate(Zygo ~ Bin + feedback, Zygo_df, mean)
+l
 
 model <- aov(Zygo ~ feedback * congruency * congruencyNmin1 * Bin, Zygo_df)
 
