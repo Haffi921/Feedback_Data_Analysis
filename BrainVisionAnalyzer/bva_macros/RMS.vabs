@@ -180,9 +180,9 @@ Sub ShowMainDialog
 	End If
 
 	' Get Values
-	ReDim Selected_Channels(0 To UBound(dlg.SelectedChannels))
+	ReDim Selected_Channels(0 To UBound(dlg.Selected_Channels))
 
-	For ch_nr = 0 To UBound(dlg.SelectedChannels)
+	For ch_nr = 0 To UBound(dlg.Selected_Channels)
 		Selected_Channels(ch_nr) = ChannelNames(dlg.Selected_Channels(ch_nr))
 	Next ch_nr
 
