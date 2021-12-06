@@ -13,6 +13,9 @@ AutoWD::autowd(1)
 library(tidyverse)
 library(rstatix)
 
+# ----------------
+# Data prep
+# ----------------
 df <- read_csv(
     "data/feedback_full_data.csv",
     col_types = c(
@@ -26,7 +29,9 @@ df <- read_csv(
   filter(trial_block == "trial", made == TRUE, correct == TRUE) %>%
   group_by(participant, block) %>%
   slice(2:n()) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(congruencyNmin1 = fct_drop(congruencyNmin1))
+# ----------------
 
 # ----------------
 # Sanity check
@@ -34,6 +39,9 @@ df <- read_csv(
 #nrow(df) %% 768 == 0
 # ----------------
 
+# ----------------
+# Outliers
+# ----------------
 zCalc <- function(x) {
   return(abs((x - mean(x, na.rm=T)) / sd(x, na.rm = T)))
 }
@@ -56,94 +64,127 @@ outliers <- df %>% filter(is.outlier == T)
 
 df <- df %>%
   filter(is.outlier == F)
-  
+# ----------------
+
+# ----------------
+# Summary
+# ----------------
 df %>%
   group_by(feedback, congruency, congruencyNmin1) %>%
-  shapiro_test(rt)
+  get_summary_stats(rt, type = "mean_sd")
+# ----------------
 
-df <- df %>%
-  group_by(participant, feedback, congruency, congruencyNmin1) %>%
-  summarise(rt = mean(rt)) %>%
-  ungroup()
-
+# ----------------
+# Visualization
+# ----------------
 df %>%
   mutate(group = paste(feedback, congruency, congruencyNmin1)) %>%
   ggplot(aes(x = group, y = rt)) +
   geom_boxplot()
+# ----------------
 
-select_group <- function(data, groups) {
-  data %>% nest %>% ungroup %>% slice(groups) %>% unnest(data)
-}
+# ----------------
+# Assumptions
+# ----------------
 
-gdf <- df %>%
+# Normality
+df %>%
+  group_by(feedback, congruency, congruencyNmin1) %>%
+  shapiro_test(rt)
+
+df %>%
+  mutate(group = as_factor(paste(feedback, congruency, congruencyNmin1))) %>%
+  ggplot(aes(sample=rt)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_grid(feedback ~ congruency + congruencyNmin1, labeller = "label_both")
+# ----------------
+
+# ----------------
+# Anova
+# ----------------
+df_for_aov <- df %>%
   group_by(participant, feedback, congruency, congruencyNmin1) %>%
   summarise(rt = mean(rt)) %>%
   ungroup()
 
-num_g <- df %>%
-  summarise(num_g = length(unique(feedback))) %>%
-  pull(num_g)
-
-num_p <- df %>%
-  summarise(num_p = length(unique(participant))) %>%
-  pull(num_p)
-
-sst <- df %>%
-  summarise(sst = var(rt) * (n() - 1)) %>%
-  pull(sst)
-
-dfsst <- 2 - 1
-
-
-ssw <- df %>%
-  group_by(participant) %>%
-  summarise(ssr = var(rt) * (n() - 1)) %>%
-  ungroup() %>%
-  summarise(ssr = sum(ssr)) %>% pull(ssr)
-
-dfssw <- num_p * num_g
-
-
-t_mean <- mean(df$rt)
-
-ssm <- df %>%
-  group_by(feedback) %>%
-  summarise(ssm = (mean(rt) - t_mean)^2 * n()) %>%
-  ungroup() %>%
-  summarise(ssm = sum(ssm)) %>% pull(ssm)
-
-dfssm <- num_g - 1
-
-
-ssr <- ssw - ssm
-
-dfssr <- dfssw - dfssm
-
-
-msm <- ssm / dfssm
-
-msr <- ssr / dfssr
-
-
-f <- msm / msr
-
-# -------------------------------------- # 
-res.aov <- df %>%
+res.aov <- df_for_aov %>%
   anova_test(dv = rt, wid = participant, within = c(feedback, congruency, congruencyNmin1))
-get_anova_table(res.aov)
-# 
-# xtabs( ~ feedback + congruency, df)
-# 
-l <- aggregate(rt ~ congruencyNmin1 + congruency + feedback + participant, df, mean)
-l$fcon <- paste(l$feedback, l$congruency, sep="_")
-# 
-# model <- aov(rt ~ feedback, gdf)
-# 
-# summary(model)
 
-l %>%
-  filter(participant == 2) %>%
-  ggplot(aes(congruencyNmin1, rt, group=fcon, color=fcon)) +
-  geom_line() +
-  geom_point()
+get_anova_table(res.aov) %>% adjust_pvalue(method = "bonferroni")
+
+df_for_aov %>%
+  pairwise_t_test(rt ~ feedback, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  pairwise_t_test(rt ~ congruency, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  pairwise_t_test(rt ~ congruencyNmin1, paired = T, p.adjust.method = "bonferroni")
+
+
+df_for_aov %>%
+  group_by(feedback) %>%
+  pairwise_t_test(rt ~ congruency, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  group_by(feedback) %>%
+  pairwise_t_test(rt ~ congruencyNmin1, paired = T, p.adjust.method = "bonferroni")
+
+
+df_for_aov %>%
+  group_by(congruency) %>%
+  pairwise_t_test(rt ~ feedback, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  group_by(congruency) %>%
+  pairwise_t_test(rt ~ congruencyNmin1, paired = T, p.adjust.method = "bonferroni")
+
+
+df_for_aov %>%
+  group_by(congruencyNmin1) %>%
+  pairwise_t_test(rt ~ feedback, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  group_by(congruencyNmin1) %>%
+  pairwise_t_test(rt ~ congruency, paired = T, p.adjust.method = "bonferroni")
+
+
+df_for_aov %>%
+  group_by(feedback, congruency) %>%
+  pairwise_t_test(rt ~ congruencyNmin1, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  group_by(feedback, congruencyNmin1) %>%
+  pairwise_t_test(rt ~ congruency, paired = T, p.adjust.method = "bonferroni")
+
+df_for_aov %>%
+  group_by(congruency, congruencyNmin1) %>%
+  pairwise_t_test(rt ~ feedback, paired = T, p.adjust.method = "bonferroni")
+# ----------------
+
+# ----------------
+# Plotting
+# ----------------
+make_gratton_plot <- function(df, title) {
+  df %>%
+    ggplot(aes(
+      congruencyNmin1, rt,
+      group=congruency, color=congruency
+    )) +
+    geom_ribbon(aes(
+      ymin = CI_min, ymax = CI_max
+    ), fill = "gray70", alpha = .3, linetype = "dashed") +
+    geom_line() +
+    geom_point() +
+    ggtitle(title$feedback) +
+    ylim(400, 550)
+}
+
+df_for_aov %>%
+  group_by(feedback, congruency, congruencyNmin1) %>%
+  summarise(se = sd(rt) / n(), rt = mean(rt), CI_min = rt - 1.96*se, CI_max = rt + 1.96*se) %>%
+  ungroup() %>%
+  group_by(feedback) %>%
+  group_map(make_gratton_plot)
 # -------------------------------------- #

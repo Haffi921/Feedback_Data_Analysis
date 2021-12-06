@@ -54,7 +54,12 @@ ZCalc <- function(column) {
 # Function for outlier detection
 outlier <- function(..., initial = NULL, z = 3.5) {
   columns <- list(...)
-  outliers <- if_else(is.null(initial), rep(FALSE, length(columns[1])), initial)
+  if(is.null(initial)) {
+    outliers <- rep(FALSE, length(columns[1]))
+  }
+  else {
+    outliers <- initial
+  }
   for(column in columns) {
     outliers <- outliers | (ZCalc(column) > z)
   }
@@ -75,8 +80,8 @@ df <- df %>%
   # Detect outliers within each individual bin, across trials
   group_by(participant, Bin) %>%
   mutate(
-    Corr_Outlier = outlier(Corr, Corr_Diff),
-    Zygo_Outlier = outlier(Zygo, Zygo_Diff),
+    Corr_Outlier = outlier(Corr, Corr_Diff, initial = Corr_Outlier),
+    Zygo_Outlier = outlier(Zygo, Zygo_Diff, initial = Zygo_Outlier),
   ) %>%
   ungroup() %>%
   
@@ -95,24 +100,58 @@ outliers <- df %>%
 # Create specific dataframes for each
 Corr_df <- df %>%
   filter(!Corr_Outlier) %>%
-  select(-c(Zygo, ends_with("Outlier")))
-
-tidy(Corr_df)
+  select(-c(Zygo, ends_with("Outlier"), ends_with("Diff")))
 
 Zygo_df <- df %>%
   filter(!Zygo_Outlier) %>%
-  select(-c(Corr, ends_with("Outlier")))
+  select(-c(Corr, ends_with("Outlier"), ends_with("Diff")))
 
-l <- aggregate(Corr ~ Bin + congruencyNmin1 + congruency + feedback, Corr_df, mean)
-l
 
-model <- aov(Corr ~ feedback * congruency * congruencyNmin1 * Bin, Corr_df)
+Corr_df_summary <- Corr_df %>%
+  group_by(participant, feedback, congruency, Bin) %>%
+  summarise(Corr = mean(Corr)) %>%
+  ungroup() %>%
+  group_by(feedback, congruency, Bin) %>%
+  summarise(mean = mean(Corr), se = sd(Corr) / n(), CI = 1.96 * se) %>%
+  ungroup()
 
-summary(model)
+Zygo_df_summary <- Zygo_df %>%
+  group_by(feedback, congruency, Bin) %>%
+  summarise(mean = mean(Zygo), se = sd(Zygo) / n(), CI = 1.96 * se) %>%
+  ungroup()
 
-l <- aggregate(Zygo ~ Bin + feedback, Zygo_df, mean)
-l
+Corr_df %>%
+  mutate(group = paste(feedback, congruency, congruencyNmin1)) %>%
+  ggplot(aes(x = group, y = Corr)) +
+  geom_boxplot()
 
-model <- aov(Zygo ~ feedback * congruency * congruencyNmin1 * Bin, Zygo_df)
 
-summary(model)
+Corr_df %>%
+  group_by(feedback, congruency, congruencyNmin1) %>%
+  shapiro_test(Corr)
+
+Corr_df %>%
+  mutate(group = as_factor(paste(feedback, congruency, congruencyNmin1))) %>%
+  ggplot(aes(sample=Corr)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_grid(feedback ~ congruency + congruencyNmin1, labeller = "label_both")
+
+Corr_df_for_aov <- df %>%
+  group_by(participant, feedback, congruency, congruencyNmin1) %>%
+  summarise(Corr = mean(Corr)) %>%
+  ungroup()
+
+res.aov <- Corr_df_for_aov %>%
+  anova_test(dv = Corr, wid = participant, within = c(feedback, congruency, congruencyNmin1))
+
+get_anova_table(res.aov) %>% adjust_pvalue(method = "bonferroni")
+
+Corr_df_summary %>%
+  ggplot(aes(Bin, mean, group=congruency, color=congruency)) +
+  facet_grid(rows = vars(feedback)) +
+  scale_x_continuous("Bins", seq(0, 10, 1)) +
+  scale_y_continuous("Corrugator activation", breaks=seq(-0.0005, 0.00160, 0.00015)) +
+  geom_ribbon(aes(ymin=mean - CI, ymax = mean + CI), fill="gray70", alpha=.3, linetype="dashed") +
+  geom_line() +
+  theme(panel.grid.minor = element_blank())
