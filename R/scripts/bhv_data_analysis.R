@@ -61,6 +61,11 @@ df %>%
   group_by(feedback, congruency, congruencyNmin1) %>%
   shapiro_test(rt)
 
+df <- df %>%
+  group_by(participant, feedback, congruency, congruencyNmin1) %>%
+  summarise(rt = mean(rt)) %>%
+  ungroup()
+
 df %>%
   mutate(group = paste(feedback, congruency, congruencyNmin1)) %>%
   ggplot(aes(x = group, y = rt)) +
@@ -87,7 +92,7 @@ sst <- df %>%
   summarise(sst = var(rt) * (n() - 1)) %>%
   pull(sst)
 
-dfsst <- nrow(df) - 1
+dfsst <- 2 - 1
 
 
 ssw <- df %>%
@@ -123,21 +128,22 @@ msr <- ssr / dfssr
 f <- msm / msr
 
 # -------------------------------------- # 
-# res.aov <- df %>%
-#   anova_test(dv = rt, wid = participant, within = c(feedback, congruency, congruencyNmin1))
-# get_anova_table(res.aov)
+res.aov <- df %>%
+  anova_test(dv = rt, wid = participant, within = c(feedback, congruency, congruencyNmin1))
+get_anova_table(res.aov)
 # 
 # xtabs( ~ feedback + congruency, df)
 # 
-# l <- aggregate(rt ~ congruencyNmin1 + congruency + feedback + participant, df, mean)
-# l$fcon <- paste(l$feedback, l$congruency, sep="_")
+l <- aggregate(rt ~ congruencyNmin1 + congruency + feedback + participant, df, mean)
+l$fcon <- paste(l$feedback, l$congruency, sep="_")
 # 
 # model <- aov(rt ~ feedback, gdf)
 # 
 # summary(model)
-# 
-# l %>%
-#   ggplot(aes(congruencyNmin1, rt, group=fcon, color=fcon)) +
-#   geom_line() +
-#   geom_point()
+
+l %>%
+  filter(participant == 2) %>%
+  ggplot(aes(congruencyNmin1, rt, group=fcon, color=fcon)) +
+  geom_line() +
+  geom_point()
 # -------------------------------------- #
