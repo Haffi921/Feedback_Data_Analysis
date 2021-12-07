@@ -11,7 +11,7 @@
 
 AutoWD::autowd(1)
 library(tidyverse)
-library(broom)
+library(rstatix)
 
 df <- read_csv(
   "data/feedback_emg_data.csv",
