@@ -1,0 +1,17 @@
+Brain Vision Data Exchange Header File Version 1.0
+
+[Common Infos]
+DataFile=Feedback005.dat
+MarkerFile=Feedback005.vmrk
+DataFormat=BINARY
+DataOrientation=VECTORIZED
+DataType=TIMEDOMAIN
+NumberOfChannels=2
+SamplingInterval=500
+
+[Binary Infos]
+BinaryFormat=IEEE_FLOAT_32
+
+[Channel Infos]
+Ch1=EMG_Corr,,1,mV
+Ch2=EMG_Zygo,,1,mV
